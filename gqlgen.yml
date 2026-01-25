@@ -1,0 +1,57 @@
+# GraphQL configuration for gqlgen
+# Where are all the schema files located? globs are supported eg  src/**/*.graphqls
+schema:
+  - graph/*.graphqls
+
+# Where should the generated server code go?
+exec:
+  filename: graph/generated/generated.go
+  package: generated
+
+# Uncomment to enable federation
+# federation:
+#   filename: graph/generated/federation.go
+#   package: generated
+
+# Where should any generated models go?
+model:
+  filename: graph/model/models_gen.go
+  package: model
+
+# Where should the resolver implementations go?
+resolver:
+  layout: follow-schema
+  dir: graph
+  package: graph
+
+# Optional: turn on use ` + "`" + ` + "`" + `go run` + "`" + ` + "`" + ` to run the server
+# gomodpath: github.com/rohit21755/groveserverv2
+
+# Optional: turn on to skip generation of ComplexityRoot struct content and Complexity function
+# omit_complexity: false
+
+# Optional: turn on to skip generation of TagFields function
+# omit_tag_fields: false
+
+# gqlgen will search for any type names in the schema in these packages
+# if they match, they will be used when possible.
+autobind:
+  - "github.com/rohit21755/groveserverv2/graph/model"
+
+# This section declares type mapping between the GraphQL and Go type systems
+#
+# The first line in each type will be used as defaults for the resolver generation and
+# type checking. To see the possible values
+# see https://github.com/99designs/gqlgen/blob/master/docs/content/reference/config.md
+models:
+  ID:
+    model:
+      - github.com/99designs/gqlgen/graphql.ID
+      - github.com/99designs/gqlgen/graphql.Int
+      - github.com/99designs/gqlgen/graphql.Int64
+      - github.com/99designs/gqlgen/graphql.Int32
+  Int:
+    model:
+      - github.com/99designs/gqlgen/graphql.Int
+      - github.com/99designs/gqlgen/graphql.Int64
+      - github.com/99designs/gqlgen/graphql.Int32

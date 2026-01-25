@@ -1,0 +1,11 @@
+# Store directory - Repository pattern implementations
+# This will contain repository interfaces and implementations for:
+# - Users
+# - Tasks
+# - Submissions
+# - Feed
+# - Leaderboards
+# - Chat
+# - Notifications
+# - Gamification
+# - Engagement

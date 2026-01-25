@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+main
+*.exe
+*.test
+*.out
+
+# Dependencies (will be downloaded in Docker)
+vendor/
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Migrations (if not needed in image)
+# migrations/
