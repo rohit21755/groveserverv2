@@ -15,27 +15,34 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 		r.Post("/register", handleRegister(postgres, cfg))
 	})
 
-	// User routes
+	// User routes (protected with JWT)
 	r.Route("/user", func(r chi.Router) {
+		r.Use(JWTAuthMiddleware(cfg))
 		r.Get("/me", handleGetMe(postgres))
 		r.Get("/{id}", handleGetUser(postgres))
 		r.Post("/{id}/follow", handleFollow(postgres))
 		r.Post("/{id}/unfollow", handleUnfollow(postgres))
-		r.Post("/resume", handleUploadResume(postgres))
+		// Resume routes
+		r.Post("/resume", handleUploadResume(postgres, cfg))
+		r.Put("/resume", handleUpdateResume(postgres, cfg))
+		// Profile picture routes
+		r.Post("/profile-pic", handleUploadProfilePic(postgres, cfg))
+		r.Put("/profile-pic", handleUpdateProfilePic(postgres, cfg))
 	})
 
-	// Task routes
+	// Task routes (protected with JWT)
 	r.Route("/tasks", func(r chi.Router) {
+		r.Use(JWTAuthMiddleware(cfg))
 		r.Get("/", handleGetTasks(postgres))
-		r.Post("/{id}/submit", handleSubmitTask(postgres))
+		r.Post("/{id}/submit", handleSubmitTask(postgres, cfg))
 	})
 
 	// Feed routes
 	r.Route("/feed", func(r chi.Router) {
-		r.Get("/", handleGetFeed(postgres))
+		r.Get("/", handleGetFeed(postgres, cfg))
 		r.Get("/user/{userId}", handleGetUserFeed(postgres))
-		r.Post("/{feedId}/react", handleReactToFeed(postgres))
-		r.Post("/{feedId}/comment", handleCommentOnFeed(postgres))
+		r.Post("/{feedId}/react", handleReactToFeed(postgres, cfg))
+		r.Post("/{feedId}/comment", handleCommentOnFeed(postgres, cfg))
 	})
 
 	// Leaderboard routes
@@ -81,7 +88,7 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 
 	// Task management
 	r.Route("/tasks", func(r chi.Router) {
-		r.Post("/", handleCreateTask(postgres))
+		r.Post("/", handleCreateTask(postgres, redisClient))
 		r.Put("/{id}", handleUpdateTask(postgres))
 	})
 

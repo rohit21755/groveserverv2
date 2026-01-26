@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	// "github.com/google/uuid"
 )
 
@@ -37,6 +37,8 @@ type S3Config struct {
 }
 
 func NewS3Storage(cfg S3Config) (*S3Storage, error) {
+	log.Printf("[S3] Initializing S3 storage - Region: %s, Profile Bucket: %s, Resume Bucket: %s", cfg.Region, cfg.ProfileBucket, cfg.ResumeBucket)
+
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -46,6 +48,7 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 		)),
 	)
 	if err != nil {
+		log.Printf("[S3] ERROR: Failed to load AWS config: %v", err)
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
@@ -56,13 +59,20 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 	profilePublicURL := cfg.ProfilePublicURL
 	if profilePublicURL == "" {
 		profilePublicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.ProfileBucket, cfg.Region)
+		log.Printf("[S3] Using default profile public URL: %s", profilePublicURL)
+	} else {
+		log.Printf("[S3] Using custom profile public URL: %s", profilePublicURL)
 	}
 
 	resumePublicURL := cfg.ResumePublicURL
 	if resumePublicURL == "" {
 		resumePublicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.ResumeBucket, cfg.Region)
+		log.Printf("[S3] Using default resume public URL: %s", resumePublicURL)
+	} else {
+		log.Printf("[S3] Using custom resume public URL: %s", resumePublicURL)
 	}
 
+	log.Printf("[S3] S3 storage initialized successfully")
 	return &S3Storage{
 		client:           client,
 		uploader:         uploader,
@@ -74,39 +84,68 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 	}, nil
 }
 
+// GetProfileBucket returns the profile bucket name
+func (s *S3Storage) GetProfileBucket() string {
+	return s.profileBucket
+}
+
+// GetResumeBucket returns the resume bucket name
+func (s *S3Storage) GetResumeBucket() string {
+	return s.resumeBucket
+}
+
 // UploadFile uploads a file to S3 and returns the public URL
-func (s *S3Storage) UploadFile(ctx context.Context, file io.Reader, bucket string, key string, contentType string, publicURL string, forceDownload bool) (string, error) {
-	// Build PutObjectInput
+func (s *S3Storage) UploadFile(
+	ctx context.Context,
+	file io.Reader,
+	bucket string,
+	key string,
+	contentType string,
+	publicURL string,
+	forceDownload bool,
+) (string, error) {
+
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		Body:        file,
 		ContentType: aws.String(contentType),
-		ACL:         types.ObjectCannedACLPublicRead, // Make file publicly accessible and downloadable
 	}
 
-	// Add Content-Disposition header to force download if needed
 	if forceDownload {
 		filename := filepath.Base(key)
-		input.ContentDisposition = aws.String(fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		input.ContentDisposition = aws.String(
+			fmt.Sprintf("attachment; filename=\"%s\"", filename),
+		)
 	}
 
-	// Upload file
-	_, err := s.uploader.Upload(ctx, input)
+	start := time.Now()
+	result, err := s.client.PutObject(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 
-	// Return public URL (directly downloadable)
 	url := fmt.Sprintf("%s/%s", publicURL, key)
+
+	log.Printf(
+		"[S3] Upload successful - Bucket=%s Key=%s ETag=%s Duration=%v",
+		bucket,
+		key,
+		aws.ToString(result.ETag),
+		time.Since(start),
+	)
+
 	return url, nil
 }
 
 // UploadResume uploads a resume file to S3 resume bucket
 func (s *S3Storage) UploadResume(ctx context.Context, file io.Reader, userID string, filename string) (string, error) {
+	log.Printf("[S3] UploadResume - UserID: %s, OriginalFilename: %s", userID, filename)
+
 	ext := filepath.Ext(filename)
 	if ext == "" {
 		ext = ".pdf" // Default to PDF
+		log.Printf("[S3] No extension found, defaulting to .pdf")
 	}
 	newFilename := fmt.Sprintf("%s_resume%s", userID, ext)
 	key := fmt.Sprintf("resumes/%s", newFilename)
@@ -119,15 +158,27 @@ func (s *S3Storage) UploadResume(ctx context.Context, file io.Reader, userID str
 		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	}
 
+	log.Printf("[S3] Resume upload - Key: %s, ContentType: %s", key, contentType)
+
 	// Force download for resumes
-	return s.UploadFile(ctx, file, s.resumeBucket, key, contentType, s.resumePublicURL, true)
+	url, err := s.UploadFile(ctx, file, s.resumeBucket, key, contentType, s.resumePublicURL, true)
+	if err != nil {
+		log.Printf("[S3] ERROR: Resume upload failed - UserID: %s, Key: %s, Error: %v", userID, key, err)
+		return "", err
+	}
+
+	log.Printf("[S3] Resume upload completed - UserID: %s, URL: %s", userID, url)
+	return url, nil
 }
 
 // UploadProfilePic uploads a profile picture to S3 profile bucket
 func (s *S3Storage) UploadProfilePic(ctx context.Context, file io.Reader, userID string, filename string) (string, error) {
+	log.Printf("[S3] UploadProfilePic - UserID: %s, OriginalFilename: %s", userID, filename)
+
 	ext := filepath.Ext(filename)
 	if ext == "" {
 		ext = ".jpg" // Default to JPG
+		log.Printf("[S3] No extension found, defaulting to .jpg")
 	}
 	newFilename := fmt.Sprintf("%s_profile%s", userID, ext)
 	key := fmt.Sprintf("profile-pics/%s", newFilename)
@@ -143,30 +194,52 @@ func (s *S3Storage) UploadProfilePic(ctx context.Context, file io.Reader, userID
 		contentType = "image/webp"
 	}
 
+	log.Printf("[S3] Profile pic upload - Key: %s, ContentType: %s", key, contentType)
+
 	// Don't force download for profile pictures (display in browser)
-	return s.UploadFile(ctx, file, s.profileBucket, key, contentType, s.profilePublicURL, false)
+	url, err := s.UploadFile(ctx, file, s.profileBucket, key, contentType, s.profilePublicURL, false)
+	if err != nil {
+		log.Printf("[S3] ERROR: Profile pic upload failed - UserID: %s, Key: %s, Error: %v", userID, key, err)
+		return "", err
+	}
+
+	log.Printf("[S3] Profile pic upload completed - UserID: %s, URL: %s", userID, url)
+	return url, nil
 }
 
 // DeleteResume deletes a resume file from S3
 func (s *S3Storage) DeleteResume(ctx context.Context, key string) error {
+	log.Printf("[S3] Deleting resume - Bucket: %s, Key: %s", s.resumeBucket, key)
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.resumeBucket),
 		Key:    aws.String(key),
 	})
-	return err
+	if err != nil {
+		log.Printf("[S3] ERROR: Failed to delete resume - Bucket: %s, Key: %s, Error: %v", s.resumeBucket, key, err)
+		return err
+	}
+	log.Printf("[S3] Resume deleted successfully - Bucket: %s, Key: %s", s.resumeBucket, key)
+	return nil
 }
 
 // DeleteProfilePic deletes a profile picture from S3
 func (s *S3Storage) DeleteProfilePic(ctx context.Context, key string) error {
+	log.Printf("[S3] Deleting profile pic - Bucket: %s, Key: %s", s.profileBucket, key)
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.profileBucket),
 		Key:    aws.String(key),
 	})
-	return err
+	if err != nil {
+		log.Printf("[S3] ERROR: Failed to delete profile pic - Bucket: %s, Key: %s, Error: %v", s.profileBucket, key, err)
+		return err
+	}
+	log.Printf("[S3] Profile pic deleted successfully - Bucket: %s, Key: %s", s.profileBucket, key)
+	return nil
 }
 
 // GeneratePresignedResumeURL generates a presigned URL for resume download
 func (s *S3Storage) GeneratePresignedResumeURL(ctx context.Context, key string, duration time.Duration) (string, error) {
+	log.Printf("[S3] Generating presigned resume URL - Bucket: %s, Key: %s, Duration: %v", s.resumeBucket, key, duration)
 	presignClient := s3.NewPresignClient(s.client)
 
 	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
@@ -177,14 +250,17 @@ func (s *S3Storage) GeneratePresignedResumeURL(ctx context.Context, key string, 
 		opts.Expires = duration
 	})
 	if err != nil {
+		log.Printf("[S3] ERROR: Failed to generate presigned resume URL - Key: %s, Error: %v", key, err)
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
+	log.Printf("[S3] Presigned resume URL generated - Key: %s, Expires: %v", key, duration)
 	return request.URL, nil
 }
 
 // GeneratePresignedProfileURL generates a presigned URL for profile picture
 func (s *S3Storage) GeneratePresignedProfileURL(ctx context.Context, key string, duration time.Duration) (string, error) {
+	log.Printf("[S3] Generating presigned profile URL - Bucket: %s, Key: %s, Duration: %v", s.profileBucket, key, duration)
 	presignClient := s3.NewPresignClient(s.client)
 
 	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
@@ -194,8 +270,10 @@ func (s *S3Storage) GeneratePresignedProfileURL(ctx context.Context, key string,
 		opts.Expires = duration
 	})
 	if err != nil {
+		log.Printf("[S3] ERROR: Failed to generate presigned profile URL - Key: %s, Error: %v", key, err)
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
+	log.Printf("[S3] Presigned profile URL generated - Key: %s, Expires: %v", key, duration)
 	return request.URL, nil
 }

@@ -241,6 +241,64 @@ func (s *UserStore) generateUniqueReferralCode(ctx context.Context, tx *sql.Tx) 
 	return "", fmt.Errorf("failed to generate unique referral code after %d attempts", maxAttempts)
 }
 
+// UpdateResumeURL updates the resume URL for a user
+func (s *UserStore) UpdateResumeURL(ctx context.Context, userID, resumeURL string) error {
+	query := `UPDATE users SET resume_url = $1 WHERE id = $2`
+	_, err := s.postgres.DB.ExecContext(ctx, query, resumeURL, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update resume URL: %w", err)
+	}
+	return nil
+}
+
+// UpdateProfilePicURL updates the profile picture URL for a user
+func (s *UserStore) UpdateProfilePicURL(ctx context.Context, userID, profilePicURL string) error {
+	query := `UPDATE users SET avatar_url = $1 WHERE id = $2`
+	_, err := s.postgres.DB.ExecContext(ctx, query, profilePicURL, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update profile picture URL: %w", err)
+	}
+	return nil
+}
+
+// GetUserByID retrieves a user by ID
+func (s *UserStore) GetUserByID(ctx context.Context, userID string) (*User, error) {
+	query := `
+		SELECT id, name, email, phone, state_id, college_id, role, xp, level, coins,
+		       bio, avatar_url, resume_url, resume_visibility, referral_code,
+		       referred_by_id, created_at
+		FROM users WHERE id = $1
+	`
+	var user User
+	var phone, bio sql.NullString
+	var referredByID sql.NullString
+
+	err := s.postgres.DB.QueryRowContext(ctx, query, userID).Scan(
+		&user.ID, &user.Name, &user.Email, &phone, &user.StateID, &user.CollegeID,
+		&user.Role, &user.XP, &user.Level, &user.Coins,
+		&bio, &user.AvatarURL, &user.ResumeURL, &user.ResumeVisibility, &user.ReferralCode,
+		&referredByID, &user.CreatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	if phone.Valid {
+		user.Phone = phone.String
+	}
+	if bio.Valid {
+		user.Bio = bio.String
+	}
+	if referredByID.Valid {
+		user.ReferredByID = referredByID.String
+	}
+
+	return &user, nil
+}
+
 // generateReferralCode generates a referral code (8 characters, alphanumeric uppercase)
 func generateReferralCode() string {
 	// Generate 6 random bytes
@@ -297,40 +355,85 @@ func generateUUIDBasedCode() string {
 	return result[:8]
 }
 
-// GetUserByID retrieves a user by ID
-func (s *UserStore) GetUserByID(ctx context.Context, userID string) (*User, error) {
-	query := `
-		SELECT id, name, email, phone, state_id, college_id, role, xp, level, coins,
-		       bio, avatar_url, resume_url, resume_visibility, referral_code,
-		       referred_by_id, created_at
-		FROM users WHERE id = $1
-	`
-	var user User
-	var phone, bio sql.NullString
-	var referredByID sql.NullString
+// FollowUser creates a follow relationship between two users
+func (s *UserStore) FollowUser(ctx context.Context, followerID, followingID string) error {
+	// Check if trying to follow self
+	if followerID == followingID {
+		return fmt.Errorf("cannot follow yourself")
+	}
 
-	err := s.postgres.DB.QueryRowContext(ctx, query, userID).Scan(
-		&user.ID, &user.Name, &user.Email, &phone, &user.StateID, &user.CollegeID,
-		&user.Role, &user.XP, &user.Level, &user.Coins,
-		&bio, &user.AvatarURL, &user.ResumeURL, &user.ResumeVisibility, &user.ReferralCode,
-		&referredByID, &user.CreatedAt,
-	)
+	// Check if user exists
+	_, err := s.GetUserByID(ctx, followingID)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found")
-		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return fmt.Errorf("user to follow not found: %w", err)
 	}
 
-	if phone.Valid {
-		user.Phone = phone.String
-	}
-	if bio.Valid {
-		user.Bio = bio.String
-	}
-	if referredByID.Valid {
-		user.ReferredByID = referredByID.String
+	// Check if already following
+	var exists bool
+	checkQuery := `SELECT EXISTS(SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2)`
+	err = s.postgres.DB.QueryRowContext(ctx, checkQuery, followerID, followingID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check follow relationship: %w", err)
 	}
 
-	return &user, nil
+	if exists {
+		return fmt.Errorf("already following this user")
+	}
+
+	// Create follow relationship
+	query := `INSERT INTO user_follows (follower_id, following_id) VALUES ($1, $2)`
+	_, err = s.postgres.DB.ExecContext(ctx, query, followerID, followingID)
+	if err != nil {
+		return fmt.Errorf("failed to create follow relationship: %w", err)
+	}
+
+	return nil
+}
+
+// UnfollowUser removes a follow relationship between two users
+func (s *UserStore) UnfollowUser(ctx context.Context, followerID, followingID string) error {
+	// Check if trying to unfollow self
+	if followerID == followingID {
+		return fmt.Errorf("cannot unfollow yourself")
+	}
+
+	// Remove follow relationship
+	query := `DELETE FROM user_follows WHERE follower_id = $1 AND following_id = $2`
+	result, err := s.postgres.DB.ExecContext(ctx, query, followerID, followingID)
+	if err != nil {
+		return fmt.Errorf("failed to remove follow relationship: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("not following this user")
+	}
+
+	return nil
+}
+
+// GetFollowingCount returns the number of users that the given user is following
+func (s *UserStore) GetFollowingCount(ctx context.Context, userID string) (int, error) {
+	query := `SELECT COUNT(*) FROM user_follows WHERE follower_id = $1`
+	var count int
+	err := s.postgres.DB.QueryRowContext(ctx, query, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get following count: %w", err)
+	}
+	return count, nil
+}
+
+// GetFollowersCount returns the number of users following the given user
+func (s *UserStore) GetFollowersCount(ctx context.Context, userID string) (int, error) {
+	query := `SELECT COUNT(*) FROM user_follows WHERE following_id = $1`
+	var count int
+	err := s.postgres.DB.QueryRowContext(ctx, query, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get followers count: %w", err)
+	}
+	return count, nil
 }

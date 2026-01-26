@@ -6,33 +6,123 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/rohit21755/groveserverv2/internal/auth"
 	"github.com/rohit21755/groveserverv2/internal/db"
 	"github.com/rohit21755/groveserverv2/internal/env"
 	"github.com/rohit21755/groveserverv2/internal/storage"
 	"github.com/rohit21755/groveserverv2/internal/store"
 )
 
+// LoginRequest represents the login request body
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// LoginResponse represents the login response
+type LoginResponse struct {
+	Token string       `json:"token"`
+	User  *store.User  `json:"user"`
+}
+
 // handleLogin handles user login
 // @Summary      User login
-// @Description  Authenticate user and return JWT token
+// @Description  Authenticate user with email and password, return JWT token and user data
 // @Tags         auth
 // @Accept       json
 // @Produce      json
 // @Param        credentials  body      LoginRequest  true  "Login credentials"
-// @Success      200         {object}  LoginResponse
+// @Success      200         {object}  LoginResponse  "Login successful"
+// @Failure      400         {string}  string  "Bad request - invalid input"
 // @Failure      401         {string}  string  "Invalid credentials"
+// @Failure      500         {string}  string  "Internal server error"
 // @Router       /api/auth/login [post]
 func handleLogin(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
+		ctx := r.Context()
+
+		// Parse request body
+		var loginReq LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
+			log.Printf("Error decoding login request: %v", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if loginReq.Email == "" || loginReq.Password == "" {
+			http.Error(w, "Email and password are required", http.StatusBadRequest)
+			return
+		}
+
+		// Create user store
+		userStore := store.NewUserStore(postgres)
+
+		// Get password hash
+		passwordHash, err := userStore.GetUserPasswordHash(ctx, loginReq.Email)
+		if err != nil {
+			log.Printf("Error getting password hash: %v", err)
+			http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+			return
+		}
+
+		// Verify password
+		if !userStore.VerifyPassword(passwordHash, loginReq.Password) {
+			log.Printf("Invalid password for email: %s", loginReq.Email)
+			http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+			return
+		}
+
+		// Get user details
+		user, err := userStore.GetUserByEmail(ctx, loginReq.Email)
+		if err != nil {
+			log.Printf("Error getting user: %v", err)
+			http.Error(w, "Failed to retrieve user data", http.StatusInternalServerError)
+			return
+		}
+
+		// Parse JWT expiry duration
+		expiryDuration, err := auth.ParseExpiryDuration(cfg.JWTExpiry)
+		if err != nil {
+			log.Printf("Error parsing JWT expiry, using default 24h: %v", err)
+			expiryDuration = 24 * time.Hour
+		}
+
+		// Generate JWT token
+		token, err := auth.GenerateToken(user.ID, user.Email, user.Role, cfg.JWTSecret, expiryDuration)
+		if err != nil {
+			log.Printf("Error generating token: %v", err)
+			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			return
+		}
+
+		// Return response
+		response := LoginResponse{
+			Token: token,
+			User:  user,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding login response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 	}
+}
+
+// RegisterResponse represents the registration response
+type RegisterResponse struct {
+	Token string       `json:"token"`
+	User  *store.User  `json:"user"`
 }
 
 // handleRegister handles user registration
 // @Summary      User registration
-// @Description  Register a new user account. Each user gets a unique referral code automatically. Referral code (input), resume, and profile picture are optional.
+// @Description  Register a new user account. Each user gets a unique referral code automatically. Referral code (input), resume, and profile picture are optional. Returns JWT token for automatic login.
 // @Tags         auth
 // @Accept       multipart/form-data
 // @Produce      json
@@ -44,7 +134,7 @@ func handleLogin(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 // @Param        referral_code formData  string  false  "Optional: Referral code of the user who referred them"
 // @Param        resume        formData  file    false  "Optional: Resume file (PDF recommended)"
 // @Param        profile_pic   formData  file    false  "Optional: Profile picture (JPG/PNG)"
-// @Success      201           {object}  store.User  "User created with auto-generated referral_code"
+// @Success      201           {object}  RegisterResponse  "User created with auto-generated referral_code and JWT token"
 // @Failure      400           {string}  string  "Bad request - missing required fields or invalid data"
 // @Failure      500           {string}  string  "Internal server error"
 // @Router       /api/auth/register [post]
@@ -157,9 +247,30 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		// If files were uploaded with temp IDs, we might want to rename them
 		// For now, we'll keep the temp IDs in the filename - this is acceptable
 
+		// Parse JWT expiry duration
+		expiryDuration, err := auth.ParseExpiryDuration(cfg.JWTExpiry)
+		if err != nil {
+			log.Printf("Error parsing JWT expiry, using default 24h: %v", err)
+			expiryDuration = 24 * time.Hour
+		}
+
+		// Generate JWT token for automatic login after registration
+		token, err := auth.GenerateToken(user.ID, user.Email, user.Role, cfg.JWTSecret, expiryDuration)
+		if err != nil {
+			log.Printf("Error generating token after registration: %v", err)
+			// Still return user data even if token generation fails
+			// But log the error for debugging
+		}
+
+		// Return response with token and user
+		response := RegisterResponse{
+			Token: token,
+			User:  user,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		if err := json.NewEncoder(w).Encode(user); err != nil {
+		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Printf("Error encoding response: %v", err)
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
