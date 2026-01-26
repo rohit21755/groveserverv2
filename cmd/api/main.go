@@ -20,6 +20,23 @@ import (
 	"github.com/rohit21755/groveserverv2/internal/router"
 )
 
+// @title           Gamified Campus Ambassador Platform API
+// @version         1.0
+// @description     Backend API for the Gamified Campus Ambassador Platform
+// @termsOfService  http://swagger.io/terms/
+
+// @contact.name   API Support
+// @contact.url    http://www.example.com/support
+// @contact.email  support@example.com
+
+// @license.name  Apache 2.0
+// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
+
+// @host      localhost:8080
+// @BasePath  /
+
+// @securityDefinitions.basic  BasicAuth
+
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {

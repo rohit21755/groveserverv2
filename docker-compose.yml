@@ -12,7 +12,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -36,6 +35,22 @@ services:
     networks:
       - gamified_network
 
+  migrate:
+    image: migrate/migrate:latest
+    container_name: gamified_ambassador_migrate
+    command: 
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-gamified_ambassador}?sslmode=disable"
+      - "up"
+    volumes:
+      - ./migrations:/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - gamified_network
+    restart: "no"
+
   api:
     build:
       context: .
@@ -53,6 +68,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_started
     networks:
       - gamified_network
     restart: unless-stopped

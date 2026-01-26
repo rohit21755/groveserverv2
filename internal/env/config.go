@@ -22,6 +22,15 @@ type Config struct {
 
 	// CORS
 	CORSAllowedOrigins []string
+
+	// AWS S3
+	AWSRegion              string
+	AWSProfileBucket       string
+	AWSResumeBucket        string
+	AWSAccessKeyID         string
+	AWSSecretAccessKey     string
+	AWSProfilePublicURL    string // Optional: CDN URL for profile bucket
+	AWSResumePublicURL     string // Optional: CDN URL for resume bucket
 }
 
 func Load() *Config {
@@ -38,6 +47,14 @@ func Load() *Config {
 		JWTExpiry: getEnv("JWT_EXPIRY", "24h"),
 
 		CORSAllowedOrigins: getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000", "http://localhost:3001"}),
+
+		AWSRegion:              getEnv("AWS_REGION", "us-east-1"),
+		AWSProfileBucket:       getEnv("AWS_PROFILE_BUCKET", ""),
+		AWSResumeBucket:        getEnv("AWS_RESUME_BUCKET", ""),
+		AWSAccessKeyID:         getEnv("AWS_ACCESS_KEY_ID", ""),
+		AWSSecretAccessKey:     getEnv("AWS_SECRET_ACCESS_KEY", ""),
+		AWSProfilePublicURL:    getEnv("AWS_PROFILE_PUBLIC_URL", ""),
+		AWSResumePublicURL:     getEnv("AWS_RESUME_PUBLIC_URL", ""),
 	}
 }
 

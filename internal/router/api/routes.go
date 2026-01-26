@@ -1,16 +1,15 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rohit21755/groveserverv2/internal/db"
 	"github.com/rohit21755/groveserverv2/internal/env"
 )
 
+// SetupAPIRoutes sets up all API routes
 func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, cfg *env.Config) {
-		// Auth routes
+	// Auth routes
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", handleLogin(postgres, cfg))
 		r.Post("/register", handleRegister(postgres, cfg))
@@ -56,11 +55,29 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 	r.Route("/notifications", func(r chi.Router) {
 		r.Get("/", handleGetNotifications(postgres))
 	})
+
+	// State routes
+	r.Route("/states", func(r chi.Router) {
+		r.Get("/", handleGetStates(postgres))
+		r.Get("/{stateId}/colleges", handleGetCollegesByState(postgres))
+	})
 }
 
+// SetupAdminRoutes sets up all admin routes
 func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, cfg *env.Config) {
 	// Admin middleware (authentication/authorization will be added)
 	r.Use(adminAuthMiddleware(cfg))
+
+	// State management - must be before other routes to avoid conflicts
+	r.Route("/states", func(r chi.Router) {
+		r.Get("/", handleGetStates(postgres))
+		r.Post("/", handleCreateState(postgres))
+	})
+
+	// College management
+	r.Route("/colleges", func(r chi.Router) {
+		r.Post("/", handleCreateCollege(postgres))
+	})
 
 	// Task management
 	r.Route("/tasks", func(r chi.Router) {
@@ -74,182 +91,4 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 		r.Post("/{id}/approve", handleApproveSubmission(postgres))
 		r.Post("/{id}/reject", handleRejectSubmission(postgres))
 	})
-}
-
-// Placeholder handlers - to be implemented
-func handleLogin(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetMe(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetUser(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleFollow(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleUnfollow(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleUploadResume(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetTasks(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleSubmitTask(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetFeed(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetUserFeed(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleReactToFeed(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleCommentOnFeed(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetPanIndiaLeaderboard(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetStateLeaderboard(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetCollegeLeaderboard(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetChatRooms(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetChatRoom(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetNotifications(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleCreateTask(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleUpdateTask(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleGetSubmissions(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
-	}
-}
-
-func adminAuthMiddleware(cfg *env.Config) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// TODO: Implement admin authentication
-			next.ServeHTTP(w, r)
-		})
-	}
 }

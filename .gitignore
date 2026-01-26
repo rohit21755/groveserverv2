@@ -48,3 +48,9 @@ docker-compose.override.yml
 # Build artifacts
 dist/
 build/
+*.py
+*.sh
+
+# Documentation (ignore all .md files except README.md)
+*.md
+!README.md

@@ -89,3 +89,8 @@ vet: ## Run go vet
 	@go vet ./...
 
 lint: fmt vet ## Run linter
+
+swagger: ## Generate Swagger documentation
+	@echo "Generating Swagger documentation..."
+	@swag init -g cmd/api/main.go -o docs
+	@echo "Swagger docs generated in ./docs"

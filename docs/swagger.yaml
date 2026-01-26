@@ -1,0 +1,198 @@
+basePath: /
+definitions:
+  api.HealthResponse:
+    properties:
+      services:
+        additionalProperties:
+          type: string
+        type: object
+      status:
+        type: string
+      timestamp:
+        type: string
+    type: object
+  store.College:
+    properties:
+      city:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      state_id:
+        type: string
+    type: object
+  store.CreateCollegeRequest:
+    properties:
+      city:
+        type: string
+      name:
+        type: string
+      state_id:
+        type: string
+    type: object
+  store.CreateStateRequest:
+    properties:
+      code:
+        type: string
+      name:
+        type: string
+    type: object
+  store.State:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+    url: http://www.example.com/support
+  description: Backend API for the Gamified Campus Ambassador Platform
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Gamified Campus Ambassador Platform API
+  version: "1.0"
+paths:
+  /admin/colleges:
+    post:
+      consumes:
+      - application/json
+      description: Create a new college (admin only)
+      parameters:
+      - description: College information
+        in: body
+        name: college
+        required: true
+        schema:
+          $ref: '#/definitions/store.CreateCollegeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/store.College'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Create a new college
+      tags:
+      - admin
+  /admin/states:
+    post:
+      consumes:
+      - application/json
+      description: Create a new state (admin only)
+      parameters:
+      - description: State information
+        in: body
+        name: state
+        required: true
+        schema:
+          $ref: '#/definitions/store.CreateStateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/store.State'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Create a new state
+      tags:
+      - admin
+  /api/states:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve a list of all states
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/store.State'
+            type: array
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Get all states
+      tags:
+      - states
+  /api/states/{stateId}/colleges:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve all colleges for a specific state
+      parameters:
+      - description: State ID
+        in: path
+        name: stateId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/store.College'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Get colleges by state
+      tags:
+      - colleges
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Check the health status of the API and its dependencies
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HealthResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.HealthResponse'
+      summary: Health check
+      tags:
+      - health
+securityDefinitions:
+  BasicAuth:
+    type: basic
+swagger: "2.0"
