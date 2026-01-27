@@ -142,16 +142,17 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 			}
 		}
 
-		// Initialize S3 storage (using profile bucket for proof files, or create a separate bucket)
-		// For now, we'll use the profile bucket for proof files
+		// Initialize S3 storage
 		s3Storage, err := storage.NewS3Storage(storage.S3Config{
-			Region:           cfg.AWSRegion,
-			ProfileBucket:    cfg.AWSProfileBucket,
-			ResumeBucket:     cfg.AWSResumeBucket,
-			AccessKeyID:      cfg.AWSAccessKeyID,
-			SecretAccessKey:  cfg.AWSSecretAccessKey,
-			ProfilePublicURL: cfg.AWSProfilePublicURL,
-			ResumePublicURL:  cfg.AWSResumePublicURL,
+			Region:             cfg.AWSRegion,
+			ProfileBucket:      cfg.AWSProfileBucket,
+			ResumeBucket:       cfg.AWSResumeBucket,
+			TaskProofBucket:    cfg.AWSTaskProofBucket,
+			AccessKeyID:        cfg.AWSAccessKeyID,
+			SecretAccessKey:    cfg.AWSSecretAccessKey,
+			ProfilePublicURL:   cfg.AWSProfilePublicURL,
+			ResumePublicURL:    cfg.AWSResumePublicURL,
+			TaskProofPublicURL: cfg.AWSTaskProofPublicURL,
 		})
 		if err != nil {
 			log.Printf("Error initializing S3 storage: %v", err)
@@ -202,18 +203,27 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 			return
 		}
 
-		// Upload proof file to S3
+		// Upload proof file to S3 task proof bucket
 		// Use a unique key: task-proofs/{taskID}/{userID}_{filename}
 		proofKey := fmt.Sprintf("task-proofs/%s/%s_%s", taskID, userID, filename)
 		
 		var proofURL string
+		var contentType string
+		
 		if isImage {
-			// Upload image using UploadProfilePic (uses profile bucket)
-			proofURL, err = s3Storage.UploadProfilePic(ctx, proofFile, userID, filename)
+			// Determine content type for images
+			contentType = "image/jpeg"
+			switch ext {
+			case ".png":
+				contentType = "image/png"
+			case ".gif":
+				contentType = "image/gif"
+			case ".webp":
+				contentType = "image/webp"
+			}
 		} else {
-			// For videos, upload directly using UploadFile to profile bucket
-			// Determine content type
-			contentType := "video/mp4"
+			// Determine content type for videos
+			contentType = "video/mp4"
 			switch ext {
 			case ".mov":
 				contentType = "video/quicktime"
@@ -224,10 +234,16 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 			case ".webm":
 				contentType = "video/webm"
 			}
-			
-			// Upload video to profile bucket
-			proofURL, err = s3Storage.UploadFile(ctx, proofFile, s3Storage.GetProfileBucket(), proofKey, contentType, cfg.AWSProfilePublicURL, false)
 		}
+		
+		// Upload to task proof bucket (for both images and videos)
+		// Use the public URL from S3Storage (which has default if not set in config)
+		taskProofPublicURL := s3Storage.GetTaskProofPublicURL()
+		if taskProofPublicURL == "" {
+			// Fallback: construct default URL if somehow not set
+			taskProofPublicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWSTaskProofBucket, cfg.AWSRegion)
+		}
+		proofURL, err = s3Storage.UploadFile(ctx, proofFile, s3Storage.GetTaskProofBucket(), proofKey, contentType, taskProofPublicURL, false)
 
 		if err != nil {
 			log.Printf("Error uploading proof file: %v", err)

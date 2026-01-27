@@ -39,10 +39,14 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 
 	// Feed routes
 	r.Route("/feed", func(r chi.Router) {
-		r.Get("/", handleGetFeed(postgres, cfg))
-		r.Get("/user/{userId}", handleGetUserFeed(postgres))
-		r.Post("/{feedId}/react", handleReactToFeed(postgres, cfg))
-		r.Post("/{feedId}/comment", handleCommentOnFeed(postgres, cfg))
+		r.Get("/", handleGetFeed(postgres, cfg))             // Public, but can use JWT for state/college filtering
+		r.Get("/user/{userId}", handleGetUserFeed(postgres)) // Public
+		// Protected routes for reactions and comments
+		r.Group(func(r chi.Router) {
+			r.Use(JWTAuthMiddleware(cfg))
+			r.Post("/{feedId}/react", handleReactToFeed(postgres, cfg))
+			r.Post("/{feedId}/comment", handleCommentOnFeed(postgres, cfg))
+		})
 	})
 
 	// Leaderboard routes
@@ -72,30 +76,41 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 
 // SetupAdminRoutes sets up all admin routes
 func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, cfg *env.Config) {
-	// Admin middleware (authentication/authorization will be added)
-	r.Use(adminAuthMiddleware(cfg))
+	// Admin authentication routes (public - no auth required)
+	r.Post("/login", handleAdminLogin(postgres, cfg))
 
-	// State management - must be before other routes to avoid conflicts
-	r.Route("/states", func(r chi.Router) {
-		r.Get("/", handleGetStates(postgres))
-		r.Post("/", handleCreateState(postgres))
-	})
+	// Protected admin routes (require JWT authentication)
+	r.Group(func(r chi.Router) {
+		// Use JWT middleware for admin routes
+		r.Use(JWTAuthMiddleware(cfg))
+		// Admin middleware (authorization/role checking will be added)
+		r.Use(adminAuthMiddleware(cfg))
 
-	// College management
-	r.Route("/colleges", func(r chi.Router) {
-		r.Post("/", handleCreateCollege(postgres))
-	})
+		// Admin management
+		r.Post("/create", handleCreateAdmin(postgres))
 
-	// Task management
-	r.Route("/tasks", func(r chi.Router) {
-		r.Post("/", handleCreateTask(postgres, redisClient))
-		r.Put("/{id}", handleUpdateTask(postgres))
-	})
+		// State management - must be before other routes to avoid conflicts
+		r.Route("/states", func(r chi.Router) {
+			r.Get("/", handleGetStates(postgres))
+			r.Post("/", handleCreateState(postgres))
+		})
 
-	// Submission management
-	r.Route("/submissions", func(r chi.Router) {
-		r.Get("/", handleGetSubmissions(postgres))
-		r.Post("/{id}/approve", handleApproveSubmission(postgres))
-		r.Post("/{id}/reject", handleRejectSubmission(postgres))
+		// College management
+		r.Route("/colleges", func(r chi.Router) {
+			r.Post("/", handleCreateCollege(postgres))
+		})
+
+		// Task management
+		r.Route("/tasks", func(r chi.Router) {
+			r.Post("/", handleCreateTask(postgres, redisClient))
+			r.Put("/{id}", handleUpdateTask(postgres))
+		})
+
+		// Submission management
+		r.Route("/submissions", func(r chi.Router) {
+			r.Get("/", handleGetSubmissions(postgres))
+			r.Post("/{id}/approve", handleApproveSubmission(postgres, redisClient))
+			r.Post("/{id}/reject", handleRejectSubmission(postgres))
+		})
 	})
 }

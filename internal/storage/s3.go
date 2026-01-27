@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -17,27 +18,31 @@ import (
 )
 
 type S3Storage struct {
-	client           *s3.Client
-	uploader         *manager.Uploader
-	profileBucket    string
-	resumeBucket     string
-	region           string
-	profilePublicURL string
-	resumePublicURL  string
+	client             *s3.Client
+	uploader           *manager.Uploader
+	profileBucket      string
+	resumeBucket       string
+	taskProofBucket    string
+	region             string
+	profilePublicURL   string
+	resumePublicURL    string
+	taskProofPublicURL string
 }
 
 type S3Config struct {
-	Region           string
-	ProfileBucket    string
-	ResumeBucket     string
-	AccessKeyID      string
-	SecretAccessKey  string
-	ProfilePublicURL string // Optional: CDN URL or S3 public URL for profile bucket
-	ResumePublicURL  string // Optional: CDN URL or S3 public URL for resume bucket
+	Region             string
+	ProfileBucket      string
+	ResumeBucket       string
+	TaskProofBucket    string
+	AccessKeyID        string
+	SecretAccessKey    string
+	ProfilePublicURL   string // Optional: CDN URL or S3 public URL for profile bucket
+	ResumePublicURL    string // Optional: CDN URL or S3 public URL for resume bucket
+	TaskProofPublicURL string // Optional: CDN URL or S3 public URL for task proof bucket
 }
 
 func NewS3Storage(cfg S3Config) (*S3Storage, error) {
-	log.Printf("[S3] Initializing S3 storage - Region: %s, Profile Bucket: %s, Resume Bucket: %s", cfg.Region, cfg.ProfileBucket, cfg.ResumeBucket)
+	log.Printf("[S3] Initializing S3 storage - Region: %s, Profile Bucket: %s, Resume Bucket: %s, Task Proof Bucket: %s", cfg.Region, cfg.ProfileBucket, cfg.ResumeBucket, cfg.TaskProofBucket)
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(cfg.Region),
@@ -72,15 +77,25 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 		log.Printf("[S3] Using custom resume public URL: %s", resumePublicURL)
 	}
 
+	taskProofPublicURL := cfg.TaskProofPublicURL
+	if taskProofPublicURL == "" {
+		taskProofPublicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.TaskProofBucket, cfg.Region)
+		log.Printf("[S3] Using default task proof public URL: %s", taskProofPublicURL)
+	} else {
+		log.Printf("[S3] Using custom task proof public URL: %s", taskProofPublicURL)
+	}
+
 	log.Printf("[S3] S3 storage initialized successfully")
 	return &S3Storage{
-		client:           client,
-		uploader:         uploader,
-		profileBucket:    cfg.ProfileBucket,
-		resumeBucket:     cfg.ResumeBucket,
-		region:           cfg.Region,
-		profilePublicURL: profilePublicURL,
-		resumePublicURL:  resumePublicURL,
+		client:             client,
+		uploader:           uploader,
+		profileBucket:      cfg.ProfileBucket,
+		resumeBucket:       cfg.ResumeBucket,
+		taskProofBucket:    cfg.TaskProofBucket,
+		region:             cfg.Region,
+		profilePublicURL:   profilePublicURL,
+		resumePublicURL:    resumePublicURL,
+		taskProofPublicURL: taskProofPublicURL,
 	}, nil
 }
 
@@ -92,6 +107,16 @@ func (s *S3Storage) GetProfileBucket() string {
 // GetResumeBucket returns the resume bucket name
 func (s *S3Storage) GetResumeBucket() string {
 	return s.resumeBucket
+}
+
+// GetTaskProofBucket returns the task proof bucket name
+func (s *S3Storage) GetTaskProofBucket() string {
+	return s.taskProofBucket
+}
+
+// GetTaskProofPublicURL returns the task proof public URL
+func (s *S3Storage) GetTaskProofPublicURL() string {
+	return s.taskProofPublicURL
 }
 
 // UploadFile uploads a file to S3 and returns the public URL
@@ -125,7 +150,20 @@ func (s *S3Storage) UploadFile(
 		return "", fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 
+	// Ensure publicURL is not empty - construct default if needed
+	if publicURL == "" {
+		// Construct default S3 public URL
+		publicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", bucket, s.region)
+		log.Printf("[S3] Warning: publicURL was empty, using default: %s", publicURL)
+	}
+
+	// Construct full URL
 	url := fmt.Sprintf("%s/%s", publicURL, key)
+	
+	// Ensure URL doesn't have double slashes
+	url = strings.ReplaceAll(url, "//", "/")
+	url = strings.Replace(url, "https:/", "https://", 1)
+	url = strings.Replace(url, "http:/", "http://", 1)
 
 	log.Printf(
 		"[S3] Upload successful - Bucket=%s Key=%s ETag=%s Duration=%v",

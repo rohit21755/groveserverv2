@@ -14,10 +14,46 @@ import (
 )
 
 // handleGetMe handles getting the current user
+// @Summary      Get current user
+// @Description  Get the authenticated user's profile with state and college names
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  store.User  "Current user profile"
+// @Failure      401  {string}  string  "Unauthorized"
+// @Failure      500  {string}  string  "Internal server error"
+// @Router       /api/user/me [get]
 func handleGetMe(postgres *db.Postgres) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("Not implemented"))
+		ctx := r.Context()
+
+		// Get user ID from context (set by JWT middleware)
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Create user store
+		userStore := store.NewUserStore(postgres)
+
+		// Get user details with state and college names
+		user, err := userStore.GetUserByID(ctx, userID)
+		if err != nil {
+			log.Printf("Error getting user: %v", err)
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		// Return user
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(user); err != nil {
+			log.Printf("Error encoding user response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 

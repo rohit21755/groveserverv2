@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -230,6 +231,9 @@ func (s *SubmissionStore) RejectSubmission(ctx context.Context, submissionID, ad
 		return nil, fmt.Errorf("rejection comment is required")
 	}
 
+	// Log rejection details for debugging
+	log.Printf("[Submission] Rejecting submission - ID: %s, Admin: %s, Comment: %s", submissionID, adminUserID, comment)
+
 	query := `
 		UPDATE submissions
 		SET status = 'rejected',
@@ -260,6 +264,17 @@ func (s *SubmissionStore) RejectSubmission(ctx context.Context, submissionID, ad
 	if reviewedBy.Valid {
 		submission.ReviewedBy = reviewedBy.String
 	}
+
+	// Verify the rejection was applied correctly
+	if submission.Status != "rejected" {
+		log.Printf("[Submission] ERROR: Status mismatch after rejection - Expected: rejected, Got: %s", submission.Status)
+		return nil, fmt.Errorf("failed to reject submission: status was not set to rejected")
+	}
+	if submission.AdminComment != comment {
+		log.Printf("[Submission] ERROR: Comment mismatch after rejection - Expected: %s, Got: %s", comment, submission.AdminComment)
+	}
+
+	log.Printf("[Submission] Successfully rejected submission - ID: %s, Status: %s, Comment: %s", submission.ID, submission.Status, submission.AdminComment)
 
 	return &submission, nil
 }

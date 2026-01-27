@@ -11,19 +11,20 @@ import (
 )
 
 type FeedItem struct {
-	ID           string    `json:"id"`
-	SubmissionID string    `json:"submission_id"`
-	UserID       string    `json:"user_id"`
-	TaskID       string    `json:"task_id"`
-	UserName     string    `json:"user_name"`
-	UserAvatar   string    `json:"user_avatar,omitempty"`
-	TaskTitle    string    `json:"task_title"`
-	TaskXP       int       `json:"task_xp"`
-	ProofURL     string    `json:"proof_url"`
-	ReactionCount int      `json:"reaction_count"`
-	CommentCount  int      `json:"comment_count"`
-	UserReacted   bool     `json:"user_reacted,omitempty"` // Whether current user reacted
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string        `json:"id"`
+	SubmissionID  string        `json:"submission_id"`
+	UserID        string        `json:"user_id"`
+	TaskID        string        `json:"task_id"`
+	UserName      string        `json:"user_name"`
+	UserAvatar    string        `json:"user_avatar,omitempty"`
+	TaskTitle     string        `json:"task_title"`
+	TaskXP        int           `json:"task_xp"`
+	ProofURL      string        `json:"proof_url"`
+	ReactionCount int           `json:"reaction_count"`
+	CommentCount  int           `json:"comment_count"`
+	Comments      []FeedComment `json:"comments,omitempty"` // Actual comments for the feed item
+	UserReacted   bool          `json:"user_reacted,omitempty"` // Whether current user reacted
+	CreatedAt     time.Time     `json:"created_at"`
 }
 
 type FeedReaction struct {
@@ -34,13 +35,13 @@ type FeedReaction struct {
 }
 
 type FeedComment struct {
-	ID        string    `json:"id"`
-	FeedID    string    `json:"feed_id"`
-	UserID    string    `json:"user_id"`
-	UserName  string    `json:"user_name"`
-	UserAvatar string   `json:"user_avatar,omitempty"`
-	Comment   string    `json:"comment"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	FeedID     string    `json:"feed_id"`
+	UserID     string    `json:"user_id"`
+	UserName   string    `json:"user_name"`
+	UserAvatar string    `json:"user_avatar,omitempty"`
+	Comment    string    `json:"comment"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type FeedStore struct {
@@ -83,17 +84,18 @@ func (s *FeedStore) GetFeed(ctx context.Context, opts GetFeedOptions) ([]FeedIte
 		opts.PageSize = 100 // Max page size
 	}
 
-	var query string
+	// var query string
 	var args []interface{}
 	argIndex := 1
 
-	// Base query - only approved submissions
+	// Base query - only approved submissions with image or video proof
 	baseQuery := `
 		FROM completed_task_feed ctf
 		INNER JOIN submissions s ON ctf.submission_id = s.id
 		INNER JOIN tasks t ON ctf.task_id = t.id
 		INNER JOIN users u ON ctf.user_id = u.id
 		WHERE s.status = 'approved'
+		AND (t.proof_type = 'image' OR t.proof_type = 'video')
 	`
 
 	// Add filtering based on feed type
@@ -124,7 +126,7 @@ func (s *FeedStore) GetFeed(ctx context.Context, opts GetFeedOptions) ([]FeedIte
 			args = append(args, collegeID.String)
 			argIndex++
 		}
-	// FeedTypePanIndia - no additional filtering needed
+		// FeedTypePanIndia - no additional filtering needed
 	}
 
 	// Count total items
@@ -163,7 +165,7 @@ func (s *FeedStore) GetFeed(ctx context.Context, opts GetFeedOptions) ([]FeedIte
 		) comment_counts ON ctf.id = comment_counts.feed_id
 		ORDER BY ctf.created_at DESC
 		LIMIT $` + fmt.Sprintf("%d", argIndex) + ` OFFSET $` + fmt.Sprintf("%d", argIndex+1)
-	
+
 	args = append(args, opts.PageSize, offset)
 
 	rows, err := s.postgres.DB.QueryContext(ctx, selectQuery, args...)
@@ -200,6 +202,15 @@ func (s *FeedStore) GetFeed(ctx context.Context, opts GetFeedOptions) ([]FeedIte
 			}
 		}
 
+		// Fetch comments for this feed item (limit to 50 most recent)
+		comments, err := s.GetComments(ctx, item.ID, 50)
+		if err == nil {
+			item.Comments = comments
+		} else {
+			// If comments fetch fails, set empty array
+			item.Comments = []FeedComment{}
+		}
+
 		feedItems = append(feedItems, item)
 	}
 
@@ -212,13 +223,6 @@ func (s *FeedStore) GetFeed(ctx context.Context, opts GetFeedOptions) ([]FeedIte
 
 // GetUserFeed retrieves feed items for a specific user
 func (s *FeedStore) GetUserFeed(ctx context.Context, userID string, page, pageSize int) ([]FeedItem, int, error) {
-	opts := GetFeedOptions{
-		FeedType: FeedTypePanIndia, // Not used for user feed
-		UserID:   "",                // Not needed for user feed
-		Page:     page,
-		PageSize: pageSize,
-	}
-
 	offset := (page - 1) * pageSize
 	if offset < 0 {
 		offset = 0
@@ -235,7 +239,9 @@ func (s *FeedStore) GetUserFeed(ctx context.Context, userID string, page, pageSi
 		SELECT COUNT(*)
 		FROM completed_task_feed ctf
 		INNER JOIN submissions s ON ctf.submission_id = s.id
+		INNER JOIN tasks t ON ctf.task_id = t.id
 		WHERE ctf.user_id = $1 AND s.status = 'approved'
+		AND (t.proof_type = 'image' OR t.proof_type = 'video')
 	`
 	var total int
 	err := s.postgres.DB.QueryRowContext(ctx, countQuery, userID).Scan(&total)
@@ -273,6 +279,7 @@ func (s *FeedStore) GetUserFeed(ctx context.Context, userID string, page, pageSi
 			GROUP BY feed_id
 		) comment_counts ON ctf.id = comment_counts.feed_id
 		WHERE ctf.user_id = $1 AND s.status = 'approved'
+		AND (t.proof_type = 'image' OR t.proof_type = 'video')
 		ORDER BY ctf.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -299,6 +306,15 @@ func (s *FeedStore) GetUserFeed(ctx context.Context, userID string, page, pageSi
 
 		if userAvatar.Valid {
 			item.UserAvatar = userAvatar.String
+		}
+
+		// Fetch comments for this feed item (limit to 50 most recent)
+		comments, err := s.GetComments(ctx, item.ID, 50)
+		if err == nil {
+			item.Comments = comments
+		} else {
+			// If comments fetch fails, set empty array
+			item.Comments = []FeedComment{}
 		}
 
 		feedItems = append(feedItems, item)

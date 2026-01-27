@@ -10,30 +10,31 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rohit21755/groveserverv2/internal/db"
 	"github.com/rohit21755/groveserverv2/internal/env"
+	"github.com/rohit21755/groveserverv2/internal/router/ws"
 	"github.com/rohit21755/groveserverv2/internal/store"
 )
 
 // CreateTaskRequest represents the request body for creating a task
 type CreateTaskRequest struct {
-	Title          string     `json:"title"`
-	Description    string     `json:"description"`
-	XP             int        `json:"xp"`
-	Type           string     `json:"type"`
-	ProofType      string     `json:"proof_type"`
-	Priority       string     `json:"priority"`
-	StartAt        *time.Time `json:"start_at,omitempty"`
-	EndAt          *time.Time `json:"end_at,omitempty"`
-	IsFlash        bool       `json:"is_flash"`
-	IsWeekly       bool       `json:"is_weekly"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	XP          int        `json:"xp"`
+	Type        string     `json:"type"`
+	ProofType   string     `json:"proof_type"`
+	Priority    string     `json:"priority"`
+	StartAt     *time.Time `json:"start_at,omitempty"`
+	EndAt       *time.Time `json:"end_at,omitempty"`
+	IsFlash     bool       `json:"is_flash"`
+	IsWeekly    bool       `json:"is_weekly"`
 	// Assignment fields
-	AssignmentType store.AssignmentType `json:"assignment_type"` // "all", "state", "college", "user"
+	AssignmentType store.AssignmentType `json:"assignment_type"`         // "all", "state", "college", "user"
 	AssignmentID   string               `json:"assignment_id,omitempty"` // State ID, College ID, or User ID (empty for "all")
 }
 
 // CreateTaskResponse represents the response after creating a task
 type CreateTaskResponse struct {
-	Task    *store.Task `json:"task"`
-	AssignedTo int      `json:"assigned_to"` // Number of users the task was assigned to
+	Task       *store.Task `json:"task"`
+	AssignedTo int         `json:"assigned_to"` // Number of users the task was assigned to
 }
 
 // handleCreateTask handles creating a new task (admin)
@@ -82,10 +83,23 @@ func handleCreateTask(postgres *db.Postgres, redisClient *db.Redis) http.Handler
 			return
 		}
 
-		// Get admin user ID from context (set by admin middleware)
-		// For now, we'll use a placeholder - TODO: Get from admin middleware
-		adminUserID := "admin-user-id" // TODO: Get from admin middleware context
-		
+		// Get admin user ID from context (set by JWT middleware)
+		adminUserID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Admin user ID not found in context. Please ensure you are authenticated.", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("Admin user ID: %s", adminUserID)
+
+		// Verify admin exists in admins table
+		adminStore := store.NewAdminStore(postgres)
+		_, err := adminStore.GetAdminByID(ctx, adminUserID)
+		if err != nil {
+			log.Printf("Error verifying admin: %v", err)
+			http.Error(w, "Admin not found. Please use a valid admin account.", http.StatusUnauthorized)
+			return
+		}
+
 		// Create task store
 		taskStore := store.NewTaskStore(postgres)
 
@@ -117,35 +131,17 @@ func handleCreateTask(postgres *db.Postgres, redisClient *db.Redis) http.Handler
 			return
 		}
 
-		// ============================================================================
-		// TODO: Send WebSocket notifications to all assigned users
-		// ============================================================================
-		// Call WebSocket notification function here to notify users about the new task.
-		// This should be implemented in internal/router/ws/notifications.go
-		//
-		// Example implementation:
-		//   ws.SendTaskAssignmentNotifications(redisClient, assignedUserIDs, task)
-		//
-		// Or send individual notifications:
-		//   for _, userID := range assignedUserIDs {
-		//       notification := map[string]interface{}{
-		//           "type": "task_assigned",
-		//           "task_id": task.ID,
-		//           "task_title": task.Title,
-		//           "task_description": task.Description,
-		//           "xp": task.XP,
-		//           "priority": task.Priority,
-		//           "is_flash": task.IsFlash,
-		//           "created_at": task.CreatedAt,
-		//       }
-		//       ws.SendNotificationToUser(redisClient, userID, notification)
-		//   }
-		//
-		// The WebSocket notification should:
-		//   1. Check if user is connected via /ws/notifications endpoint
-		//   2. Send notification message to connected WebSocket clients
-		//   3. Optionally store notification in database (notifications table) for offline users
-		// ============================================================================
+		// Send WebSocket notifications to all assigned users
+		wsHub := ws.GetHub()
+		if wsHub != nil && len(assignedUserIDs) > 0 {
+			err = ws.SendTaskAssignmentNotification(wsHub, assignedUserIDs, task.ID, task.Title, task.Description)
+			if err != nil {
+				log.Printf("Error sending task assignment notifications: %v", err)
+				// Don't fail the request if notification fails
+			} else {
+				log.Printf("Sent task assignment notifications to %d users", len(assignedUserIDs))
+			}
+		}
 
 		// Return response
 		response := CreateTaskResponse{
@@ -232,7 +228,7 @@ type ApproveSubmissionRequest struct {
 // @Failure      404      {string}  string  "Submission not found"
 // @Failure      500      {string}  string  "Internal server error"
 // @Router       /admin/submissions/{id}/approve [post]
-func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
+func handleApproveSubmission(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -243,13 +239,20 @@ func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
 			return
 		}
 
-		// Get admin user ID from context (set by admin middleware)
-		// For now, we'll use JWT middleware to get user ID
+		// Get admin user ID from context (set by JWT middleware)
 		adminUserID, ok := GetUserIDFromContext(ctx)
 		if !ok {
-			// Fallback: try to get from admin middleware context
-			// TODO: Implement proper admin middleware that sets admin user ID
-			adminUserID = "admin-user-id" // Placeholder
+			http.Error(w, "Admin user ID not found in context. Please ensure you are authenticated.", http.StatusUnauthorized)
+			return
+		}
+
+		// Verify admin exists
+		adminStore := store.NewAdminStore(postgres)
+		_, err := adminStore.GetAdminByID(ctx, adminUserID)
+		if err != nil {
+			log.Printf("Error verifying admin: %v", err)
+			http.Error(w, "Admin not found. Please use a valid admin account.", http.StatusUnauthorized)
+			return
 		}
 
 		// Parse request body (optional comment)
@@ -305,6 +308,7 @@ func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
 		}
 
 		// Award XP to user for task approval
+		xpAwarded := 0
 		if task.XP > 0 {
 			xpStore := store.NewXPStore(postgres)
 			xpLog, err := xpStore.AwardXP(ctx, store.AwardXPRequest{
@@ -318,8 +322,40 @@ func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
 				// Log error but don't fail the approval - XP can be awarded manually later if needed
 				// In production, you might want to use a queue/retry mechanism for XP awards
 			} else {
+				xpAwarded = task.XP
 				log.Printf("Awarded %d XP to user %s for task approval (task_id: %s, xp_log_id: %s)",
 					task.XP, submission.UserID, submission.TaskID, xpLog.ID)
+
+				// Broadcast leaderboard updates via Redis
+				// Get user info to determine which leaderboards to update
+				userStore := store.NewUserStore(postgres)
+				user, err := userStore.GetUserByID(ctx, submission.UserID)
+				if err == nil {
+					// Broadcast pan-india update
+					ws.BroadcastLeaderboardUpdate(redisClient, "pan-india", "")
+
+					// Broadcast state update if user has state
+					if user.StateID != "" {
+						ws.BroadcastLeaderboardUpdate(redisClient, "state", user.StateID)
+					}
+
+					// Broadcast college update if user has college
+					if user.CollegeID != "" {
+						ws.BroadcastLeaderboardUpdate(redisClient, "college", user.CollegeID)
+					}
+				}
+			}
+		}
+
+		// Send WebSocket notification to user about task approval (always send, even if XP is 0)
+		wsHub := ws.GetHub()
+		if wsHub != nil {
+			err = ws.SendTaskApprovalNotification(wsHub, submission.UserID, task.ID, task.Title, xpAwarded)
+			if err != nil {
+				log.Printf("Error sending task approval notification: %v", err)
+				// Don't fail the request if notification fails
+			} else {
+				log.Printf("Sent task approval notification to user %s for task %s", submission.UserID, task.ID)
 			}
 		}
 
@@ -333,21 +369,6 @@ func handleApproveSubmission(postgres *db.Postgres) http.HandlerFunc {
 			log.Printf("Created feed entry for approved submission (submission_id: %s, user_id: %s, task_id: %s)",
 				submission.ID, submission.UserID, submission.TaskID)
 		}
-
-		// ============================================================================
-		// TODO: Send WebSocket notification to user about submission approval
-		// ============================================================================
-		// Call WebSocket notification function here to notify the user about the approval.
-		// This should be implemented in internal/router/ws/notifications.go
-		//
-		// Example implementation:
-		//   notification := map[string]interface{}{
-		//       "type": "submission_approved",
-		//       "submission_id": submission.ID,
-		//       "task_id": submission.TaskID,
-		//       "user_id": submission.UserID,
-		//       "xp_awarded": task.XP,
-		//       "admin_comment": req.Comment,
 		//       "timestamp": time.Now(),
 		//   }
 		//   ws.SendNotificationToUser(redisClient, submission.UserID, notification)
@@ -395,13 +416,20 @@ func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
 			return
 		}
 
-		// Get admin user ID from context (set by admin middleware)
-		// For now, we'll use JWT middleware to get user ID
+		// Get admin user ID from context (set by JWT middleware)
 		adminUserID, ok := GetUserIDFromContext(ctx)
 		if !ok {
-			// Fallback: try to get from admin middleware context
-			// TODO: Implement proper admin middleware that sets admin user ID
-			adminUserID = "admin-user-id" // Placeholder
+			http.Error(w, "Admin user ID not found in context. Please ensure you are authenticated.", http.StatusUnauthorized)
+			return
+		}
+
+		// Verify admin exists
+		adminStore := store.NewAdminStore(postgres)
+		_, err := adminStore.GetAdminByID(ctx, adminUserID)
+		if err != nil {
+			log.Printf("Error verifying admin: %v", err)
+			http.Error(w, "Admin not found. Please use a valid admin account.", http.StatusUnauthorized)
+			return
 		}
 
 		// Parse request body (required comment)
@@ -421,6 +449,18 @@ func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
 		// Create submission store
 		submissionStore := store.NewSubmissionStore(postgres)
 
+		// Get submission to retrieve task ID and user ID
+		existingSubmission, err := submissionStore.GetSubmissionByID(ctx, submissionID)
+		if err != nil {
+			log.Printf("Error getting submission: %v", err)
+			if err.Error() == "submission not found" {
+				http.Error(w, "Submission not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, fmt.Sprintf("Failed to get submission: %v", err), http.StatusInternalServerError)
+			return
+		}
+
 		// Reject submission
 		rejectedSubmission, err := submissionStore.RejectSubmission(ctx, submissionID, adminUserID, req.Comment)
 		if err != nil {
@@ -433,11 +473,29 @@ func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
 			return
 		}
 
-		// ============================================================================
-		// TODO: Send WebSocket notification to user about submission rejection
-		// ============================================================================
-		// Call WebSocket notification function here to notify the user about the rejection.
-		// This should be implemented in internal/router/ws/notifications.go
+		// Get task details for notification
+		taskStore := store.NewTaskStore(postgres)
+		task, err := taskStore.GetTaskByID(ctx, existingSubmission.TaskID)
+		taskTitle := "Task"
+		if err != nil {
+			log.Printf("Error getting task for notification: %v", err)
+			// Use task ID as fallback title if task lookup fails
+			taskTitle = existingSubmission.TaskID
+		} else {
+			taskTitle = task.Title
+		}
+
+		// Send WebSocket notification to user about task rejection (always send, even if task lookup failed)
+		wsHub := ws.GetHub()
+		if wsHub != nil {
+			err = ws.SendTaskRejectionNotification(wsHub, existingSubmission.UserID, existingSubmission.TaskID, taskTitle, req.Comment)
+			if err != nil {
+				log.Printf("Error sending task rejection notification: %v", err)
+				// Don't fail the request if notification fails
+			} else {
+				log.Printf("Sent task rejection notification to user %s for task %s", existingSubmission.UserID, existingSubmission.TaskID)
+			}
+		}
 		//
 		// Note: To check if user can resubmit, get the task and check if deadline has passed:
 		//   taskStore := store.NewTaskStore(postgres)

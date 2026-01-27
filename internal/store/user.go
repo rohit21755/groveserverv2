@@ -20,7 +20,9 @@ type User struct {
 	Email           string    `json:"email"`
 	Phone           string    `json:"phone,omitempty"`
 	StateID         string    `json:"state_id"`
+	StateName       string    `json:"state_name,omitempty"`
 	CollegeID       string    `json:"college_id"`
+	CollegeName     string    `json:"college_name,omitempty"`
 	Role            string    `json:"role"`
 	XP              int       `json:"xp"`
 	Level           int       `json:"level"`
@@ -144,7 +146,14 @@ func (s *UserStore) Register(ctx context.Context, req RegisterRequest, resumeURL
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return &user, nil
+	// Fetch user with state and college names
+	userWithNames, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		// If fetch fails, return the user without names (fallback)
+		return &user, nil
+	}
+
+	return userWithNames, nil
 }
 
 // getUserIDByReferralCode gets user ID by referral code
@@ -161,13 +170,19 @@ func (s *UserStore) getUserIDByReferralCode(ctx context.Context, tx *sql.Tx, ref
 	return userID, nil
 }
 
-// GetUserByEmail retrieves a user by email (without password hash)
+// GetUserByEmail retrieves a user by email (without password hash) with state and college names
 func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	query := `
-		SELECT id, name, email, phone, state_id, college_id, role, xp, level, coins,
-		       bio, avatar_url, resume_url, resume_visibility, referral_code,
-		       referred_by_id, created_at
-		FROM users WHERE email = $1
+		SELECT 
+			u.id, u.name, u.email, u.phone, u.state_id, u.college_id, u.role, u.xp, u.level, u.coins,
+			u.bio, u.avatar_url, u.resume_url, u.resume_visibility, u.referral_code,
+			u.referred_by_id, u.created_at,
+			COALESCE(s.name, '') as state_name,
+			COALESCE(c.name, '') as college_name
+		FROM users u
+		LEFT JOIN states s ON u.state_id = s.id
+		LEFT JOIN colleges c ON u.college_id = c.id
+		WHERE u.email = $1
 	`
 	var user User
 	var phone, bio sql.NullString
@@ -178,6 +193,7 @@ func (s *UserStore) GetUserByEmail(ctx context.Context, email string) (*User, er
 		&user.Role, &user.XP, &user.Level, &user.Coins,
 		&bio, &user.AvatarURL, &user.ResumeURL, &user.ResumeVisibility, &user.ReferralCode,
 		&referredByID, &user.CreatedAt,
+		&user.StateName, &user.CollegeName,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -261,13 +277,19 @@ func (s *UserStore) UpdateProfilePicURL(ctx context.Context, userID, profilePicU
 	return nil
 }
 
-// GetUserByID retrieves a user by ID
+// GetUserByID retrieves a user by ID with state and college names
 func (s *UserStore) GetUserByID(ctx context.Context, userID string) (*User, error) {
 	query := `
-		SELECT id, name, email, phone, state_id, college_id, role, xp, level, coins,
-		       bio, avatar_url, resume_url, resume_visibility, referral_code,
-		       referred_by_id, created_at
-		FROM users WHERE id = $1
+		SELECT 
+			u.id, u.name, u.email, u.phone, u.state_id, u.college_id, u.role, u.xp, u.level, u.coins,
+			u.bio, u.avatar_url, u.resume_url, u.resume_visibility, u.referral_code,
+			u.referred_by_id, u.created_at,
+			COALESCE(s.name, '') as state_name,
+			COALESCE(c.name, '') as college_name
+		FROM users u
+		LEFT JOIN states s ON u.state_id = s.id
+		LEFT JOIN colleges c ON u.college_id = c.id
+		WHERE u.id = $1
 	`
 	var user User
 	var phone, bio sql.NullString
@@ -278,6 +300,7 @@ func (s *UserStore) GetUserByID(ctx context.Context, userID string) (*User, erro
 		&user.Role, &user.XP, &user.Level, &user.Coins,
 		&bio, &user.AvatarURL, &user.ResumeURL, &user.ResumeVisibility, &user.ReferralCode,
 		&referredByID, &user.CreatedAt,
+		&user.StateName, &user.CollegeName,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

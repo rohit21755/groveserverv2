@@ -27,10 +27,12 @@ type Config struct {
 	AWSRegion              string
 	AWSProfileBucket       string
 	AWSResumeBucket        string
+	AWSTaskProofBucket     string // Bucket for task submission proof files
 	AWSAccessKeyID         string
 	AWSSecretAccessKey     string
 	AWSProfilePublicURL    string // Optional: CDN URL for profile bucket
 	AWSResumePublicURL     string // Optional: CDN URL for resume bucket
+	AWSTaskProofPublicURL  string // Optional: CDN URL for task proof bucket
 }
 
 func Load() *Config {
@@ -51,10 +53,12 @@ func Load() *Config {
 		AWSRegion:              getEnv("AWS_REGION", "us-east-1"),
 		AWSProfileBucket:       getEnv("AWS_PROFILE_BUCKET", ""),
 		AWSResumeBucket:        getEnv("AWS_RESUME_BUCKET", ""),
+		AWSTaskProofBucket:     getEnv("AWS_TASK_PROOF_BUCKET", "users-submissions"),
 		AWSAccessKeyID:         getEnv("AWS_ACCESS_KEY_ID", ""),
 		AWSSecretAccessKey:     getEnv("AWS_SECRET_ACCESS_KEY", ""),
 		AWSProfilePublicURL:    getEnv("AWS_PROFILE_PUBLIC_URL", ""),
 		AWSResumePublicURL:     getEnv("AWS_RESUME_PUBLIC_URL", ""),
+		AWSTaskProofPublicURL:  getEnv("AWS_TASK_PROOF_PUBLIC_URL", ""),
 	}
 }
 

@@ -1,39 +1,32 @@
 package ws
 
 import (
-	"net/http"
-
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rohit21755/groveserverv2/internal/db"
 	"github.com/rohit21755/groveserverv2/internal/env"
 )
 
+var globalHub *Hub
+
+// SetupWSRoutes sets up WebSocket routes
 func SetupWSRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, cfg *env.Config) {
-	// WebSocket endpoints
-	r.Get("/chat", handleChatWS(postgres, redisClient))
+	// Create global hub if not exists
+	if globalHub == nil {
+		globalHub = NewHub(redisClient, postgres)
+		go globalHub.Run()
+	}
+
+	// Unified WebSocket connection endpoint (requires JWT token)
+	// Connect via: ws://localhost:8080/ws/connect?token=JWT_TOKEN
+	// Or: ws://localhost:8080/ws/connect with Authorization: Bearer JWT_TOKEN header
+	r.Get("/connect", handleWSConnection(globalHub, cfg))
+
+	// Legacy endpoints (kept for backward compatibility)
 	r.Get("/leaderboard", handleLeaderboardWS(postgres, redisClient))
-	r.Get("/notifications", handleNotificationsWS(postgres, redisClient))
 }
 
-// Placeholder WebSocket handlers - to be implemented
-func handleChatWS(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("WebSocket not implemented"))
-	}
-}
-
-func handleLeaderboardWS(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("WebSocket not implemented"))
-	}
-}
-
-func handleNotificationsWS(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("WebSocket not implemented"))
-	}
+// GetHub returns the global WebSocket hub
+func GetHub() *Hub {
+	return globalHub
 }
