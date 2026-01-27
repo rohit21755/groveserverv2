@@ -30,7 +30,8 @@ func NewLeaderboardStore(postgres *db.Postgres) *LeaderboardStore {
 }
 
 // GetPanIndiaLeaderboard retrieves the pan-India leaderboard
-func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, offset int) ([]LeaderboardEntry, error) {
+// period can be "all", "weekly", or "monthly" - defaults to "all"
+func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, offset int, period string) ([]LeaderboardEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -38,19 +39,63 @@ func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, of
 		limit = 1000
 	}
 
-	query := `
-		SELECT 
-			ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-			u.id as user_id,
-			u.name as user_name,
-			u.avatar_url as user_avatar,
-			u.xp,
-			u.level
-		FROM users u
-		WHERE u.role = 'student'
-		ORDER BY u.xp DESC, u.created_at ASC
-		LIMIT $1 OFFSET $2
-	`
+	if period == "" {
+		period = "all"
+	}
+
+	var query string
+	switch period {
+	case "weekly":
+		// Get XP earned in the last 7 days from xp_logs
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level
+			FROM users u
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '7 days'
+			WHERE u.role = 'student'
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $1 OFFSET $2
+		`
+	case "monthly":
+		// Get XP earned in the last 30 days from xp_logs
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level
+			FROM users u
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '30 days'
+			WHERE u.role = 'student'
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $1 OFFSET $2
+		`
+	default: // "all"
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				u.xp,
+				u.level
+			FROM users u
+			WHERE u.role = 'student'
+			ORDER BY u.xp DESC, u.created_at ASC
+			LIMIT $1 OFFSET $2
+		`
+	}
 
 	rows, err := s.postgres.DB.QueryContext(ctx, query, limit, offset)
 	if err != nil {
@@ -86,7 +131,8 @@ func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, of
 }
 
 // GetStateLeaderboard retrieves the state leaderboard
-func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID string, limit, offset int) ([]LeaderboardEntry, error) {
+// period can be "all", "weekly", or "monthly" - defaults to "all"
+func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID string, limit, offset int, period string) ([]LeaderboardEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -94,21 +140,67 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 		limit = 1000
 	}
 
-	query := `
-		SELECT 
-			ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-			u.id as user_id,
-			u.name as user_name,
-			u.avatar_url as user_avatar,
-			u.xp,
-			u.level,
-			s.name as state_name
-		FROM users u
-		INNER JOIN states s ON u.state_id = s.id
-		WHERE u.role = 'student' AND u.state_id = $1
-		ORDER BY u.xp DESC, u.created_at ASC
-		LIMIT $2 OFFSET $3
-	`
+	if period == "" {
+		period = "all"
+	}
+
+	var query string
+	switch period {
+	case "weekly":
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level,
+				s.name as state_name
+			FROM users u
+			INNER JOIN states s ON u.state_id = s.id
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '7 days'
+			WHERE u.role = 'student' AND u.state_id = $1
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, s.name
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	case "monthly":
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level,
+				s.name as state_name
+			FROM users u
+			INNER JOIN states s ON u.state_id = s.id
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '30 days'
+			WHERE u.role = 'student' AND u.state_id = $1
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, s.name
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	default: // "all"
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				u.xp,
+				u.level,
+				s.name as state_name
+			FROM users u
+			INNER JOIN states s ON u.state_id = s.id
+			WHERE u.role = 'student' AND u.state_id = $1
+			ORDER BY u.xp DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	}
 
 	rows, err := s.postgres.DB.QueryContext(ctx, query, stateID, limit, offset)
 	if err != nil {
@@ -148,7 +240,8 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 }
 
 // GetCollegeLeaderboard retrieves the college leaderboard
-func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID string, limit, offset int) ([]LeaderboardEntry, error) {
+// period can be "all", "weekly", or "monthly" - defaults to "all"
+func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID string, limit, offset int, period string) ([]LeaderboardEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -156,21 +249,67 @@ func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID 
 		limit = 1000
 	}
 
-	query := `
-		SELECT 
-			ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-			u.id as user_id,
-			u.name as user_name,
-			u.avatar_url as user_avatar,
-			u.xp,
-			u.level,
-			c.name as college_name
-		FROM users u
-		INNER JOIN colleges c ON u.college_id = c.id
-		WHERE u.role = 'student' AND u.college_id = $1
-		ORDER BY u.xp DESC, u.created_at ASC
-		LIMIT $2 OFFSET $3
-	`
+	if period == "" {
+		period = "all"
+	}
+
+	var query string
+	switch period {
+	case "weekly":
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level,
+				c.name as college_name
+			FROM users u
+			INNER JOIN colleges c ON u.college_id = c.id
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '7 days'
+			WHERE u.role = 'student' AND u.college_id = $1
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, c.name
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	case "monthly":
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				COALESCE(SUM(xl.xp), 0) as xp,
+				u.level,
+				c.name as college_name
+			FROM users u
+			INNER JOIN colleges c ON u.college_id = c.id
+			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
+				AND xl.created_at >= NOW() - INTERVAL '30 days'
+			WHERE u.role = 'student' AND u.college_id = $1
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, c.name
+			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	default: // "all"
+		query = `
+			SELECT 
+				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
+				u.id as user_id,
+				u.name as user_name,
+				u.avatar_url as user_avatar,
+				u.xp,
+				u.level,
+				c.name as college_name
+			FROM users u
+			INNER JOIN colleges c ON u.college_id = c.id
+			WHERE u.role = 'student' AND u.college_id = $1
+			ORDER BY u.xp DESC, u.created_at ASC
+			LIMIT $2 OFFSET $3
+		`
+	}
 
 	rows, err := s.postgres.DB.QueryContext(ctx, query, collegeID, limit, offset)
 	if err != nil {

@@ -111,9 +111,27 @@ func (s *XPStore) AwardXP(ctx context.Context, req AwardXPRequest) (*XPLog, erro
 		xpLog.SourceID = logSourceID.String
 	}
 
+	// Get user's current level (for badge checking)
+	var userLevel int
+	levelQuery := `SELECT level FROM users WHERE id = $1`
+	err = tx.QueryRowContext(ctx, levelQuery, req.UserID).Scan(&userLevel)
+	if err != nil {
+		// Log error but don't fail - level check is not critical
+		userLevel = 1
+	}
+
 	// Commit transaction
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Check and award badges based on new XP and level (after commit)
+	// This is done outside the transaction to avoid long-running transactions
+	badgeStore := NewBadgeStore(s.postgres)
+	err = badgeStore.CheckAndAwardBadges(ctx, req.UserID, newXP, userLevel)
+	if err != nil {
+		// Log error but don't fail - badge awarding is not critical
+		// In production, you might want to use a queue/retry mechanism
 	}
 
 	return &xpLog, nil

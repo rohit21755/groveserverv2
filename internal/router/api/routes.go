@@ -28,6 +28,12 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 		// Profile picture routes
 		r.Post("/profile-pic", handleUploadProfilePic(postgres, cfg))
 		r.Put("/profile-pic", handleUpdateProfilePic(postgres, cfg))
+		// Badge routes
+		r.Get("/badges", handleGetMyBadges(postgres))
+		// Task history
+		r.Get("/tasks/history", handleGetMyTaskHistory(postgres))
+		// Streak routes
+		r.Post("/streak/redeem", handleRedeemStreak(postgres))
 	})
 
 	// Task routes (protected with JWT)
@@ -103,7 +109,12 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 		// Task management
 		r.Route("/tasks", func(r chi.Router) {
 			r.Post("/", handleCreateTask(postgres, redisClient))
-			r.Put("/{id}", handleUpdateTask(postgres))
+			r.Put("/{id}", handleUpdateTask(postgres, redisClient))
+		})
+
+		// Badge management
+		r.Route("/badges", func(r chi.Router) {
+			r.Post("/", handleCreateBadge(postgres, cfg))
 		})
 
 		// Submission management

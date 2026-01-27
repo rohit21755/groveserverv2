@@ -17,11 +17,11 @@ import (
 
 // LeaderboardClient represents a WebSocket client for leaderboard updates
 type LeaderboardClient struct {
-	conn       *websocket.Conn
-	send       chan []byte
+	conn            *websocket.Conn
+	send            chan []byte
 	leaderboardType string // "pan-india", "state", "college"
-	scopeID    string      // state_id or college_id (for state/college leaderboards)
-	hub        *LeaderboardHub
+	scopeID         string // state_id or college_id (for state/college leaderboards)
+	hub             *LeaderboardHub
 }
 
 // LeaderboardHub maintains the set of active clients and broadcasts messages
@@ -51,12 +51,12 @@ type LeaderboardHub struct {
 // NewLeaderboardHub creates a new leaderboard hub
 func NewLeaderboardHub(redisClient *db.Redis, postgres *db.Postgres) *LeaderboardHub {
 	return &LeaderboardHub{
-		clients:    make(map[*LeaderboardClient]bool),
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *LeaderboardClient),
-		unregister: make(chan *LeaderboardClient),
+		clients:     make(map[*LeaderboardClient]bool),
+		broadcast:   make(chan []byte, 256),
+		register:    make(chan *LeaderboardClient),
+		unregister:  make(chan *LeaderboardClient),
 		redisClient: redisClient,
-		postgres:   postgres,
+		postgres:    postgres,
 	}
 }
 
@@ -243,19 +243,28 @@ func handleLeaderboardWS(postgres *db.Postgres, redisClient *db.Redis) http.Hand
 			var entries []store.LeaderboardEntry
 			var err error
 
+			// Get period from query parameter, default to "all"
+			period := r.URL.Query().Get("period")
+			if period == "" {
+				period = "all"
+			}
+			if period != "all" && period != "weekly" && period != "monthly" {
+				period = "all"
+			}
+
 			switch leaderboardType {
 			case "pan-india":
-				entries, err = leaderboardStore.GetPanIndiaLeaderboard(r.Context(), 100, 0)
+				entries, err = leaderboardStore.GetPanIndiaLeaderboard(r.Context(), 100, 0, period)
 			case "state":
 				if scopeID == "" {
 					return
 				}
-				entries, err = leaderboardStore.GetStateLeaderboard(r.Context(), scopeID, 100, 0)
+				entries, err = leaderboardStore.GetStateLeaderboard(r.Context(), scopeID, 100, 0, period)
 			case "college":
 				if scopeID == "" {
 					return
 				}
-				entries, err = leaderboardStore.GetCollegeLeaderboard(r.Context(), scopeID, 100, 0)
+				entries, err = leaderboardStore.GetCollegeLeaderboard(r.Context(), scopeID, 100, 0, period)
 			default:
 				return
 			}
@@ -271,10 +280,10 @@ func handleLeaderboardWS(postgres *db.Postgres, redisClient *db.Redis) http.Hand
 			}
 
 			response := map[string]interface{}{
-				"type":    "leaderboard_data",
-				"scope":   leaderboardType,
+				"type":     "leaderboard_data",
+				"scope":    leaderboardType,
 				"scope_id": scopeID,
-				"entries": entries,
+				"entries":  entries,
 			}
 
 			responseJSON, err := json.Marshal(response)

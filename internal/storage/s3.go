@@ -23,10 +23,12 @@ type S3Storage struct {
 	profileBucket      string
 	resumeBucket       string
 	taskProofBucket    string
+	badgeBucket        string
 	region             string
 	profilePublicURL   string
 	resumePublicURL    string
 	taskProofPublicURL string
+	badgePublicURL     string
 }
 
 type S3Config struct {
@@ -34,15 +36,17 @@ type S3Config struct {
 	ProfileBucket      string
 	ResumeBucket       string
 	TaskProofBucket    string
+	BadgeBucket        string
 	AccessKeyID        string
 	SecretAccessKey    string
 	ProfilePublicURL   string // Optional: CDN URL or S3 public URL for profile bucket
 	ResumePublicURL    string // Optional: CDN URL or S3 public URL for resume bucket
 	TaskProofPublicURL string // Optional: CDN URL or S3 public URL for task proof bucket
+	BadgePublicURL     string // Optional: CDN URL or S3 public URL for badge bucket
 }
 
 func NewS3Storage(cfg S3Config) (*S3Storage, error) {
-	log.Printf("[S3] Initializing S3 storage - Region: %s, Profile Bucket: %s, Resume Bucket: %s, Task Proof Bucket: %s", cfg.Region, cfg.ProfileBucket, cfg.ResumeBucket, cfg.TaskProofBucket)
+	log.Printf("[S3] Initializing S3 storage - Region: %s, Profile Bucket: %s, Resume Bucket: %s, Task Proof Bucket: %s, Badge Bucket: %s", cfg.Region, cfg.ProfileBucket, cfg.ResumeBucket, cfg.TaskProofBucket, cfg.BadgeBucket)
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(cfg.Region),
@@ -85,6 +89,21 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 		log.Printf("[S3] Using custom task proof public URL: %s", taskProofPublicURL)
 	}
 
+	// Use profile bucket for badges if badge bucket is not set
+	badgeBucket := cfg.BadgeBucket
+	if badgeBucket == "" {
+		badgeBucket = cfg.ProfileBucket
+		log.Printf("[S3] Badge bucket not set, using profile bucket: %s", badgeBucket)
+	}
+
+	badgePublicURL := cfg.BadgePublicURL
+	if badgePublicURL == "" {
+		badgePublicURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", badgeBucket, cfg.Region)
+		log.Printf("[S3] Using default badge public URL: %s", badgePublicURL)
+	} else {
+		log.Printf("[S3] Using custom badge public URL: %s", badgePublicURL)
+	}
+
 	log.Printf("[S3] S3 storage initialized successfully")
 	return &S3Storage{
 		client:             client,
@@ -92,10 +111,12 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 		profileBucket:      cfg.ProfileBucket,
 		resumeBucket:       cfg.ResumeBucket,
 		taskProofBucket:    cfg.TaskProofBucket,
+		badgeBucket:        badgeBucket,
 		region:             cfg.Region,
 		profilePublicURL:   profilePublicURL,
 		resumePublicURL:    resumePublicURL,
 		taskProofPublicURL: taskProofPublicURL,
+		badgePublicURL:     badgePublicURL,
 	}, nil
 }
 
@@ -117,6 +138,52 @@ func (s *S3Storage) GetTaskProofBucket() string {
 // GetTaskProofPublicURL returns the task proof public URL
 func (s *S3Storage) GetTaskProofPublicURL() string {
 	return s.taskProofPublicURL
+}
+
+// GetBadgeBucket returns the badge bucket name
+func (s *S3Storage) GetBadgeBucket() string {
+	return s.badgeBucket
+}
+
+// GetBadgePublicURL returns the badge public URL
+func (s *S3Storage) GetBadgePublicURL() string {
+	return s.badgePublicURL
+}
+
+// UploadBadgeImage uploads a badge image to S3 badge bucket
+func (s *S3Storage) UploadBadgeImage(ctx context.Context, file io.Reader, badgeID string, filename string) (string, error) {
+	log.Printf("[S3] UploadBadgeImage - BadgeID: %s, OriginalFilename: %s", badgeID, filename)
+
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".png" // Default to PNG
+		log.Printf("[S3] No extension found, defaulting to .png")
+	}
+	newFilename := fmt.Sprintf("%s_badge%s", badgeID, ext)
+	key := fmt.Sprintf("badges/%s", newFilename)
+
+	// Determine content type based on extension
+	contentType := "image/png"
+	switch ext {
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".gif":
+		contentType = "image/gif"
+	case ".webp":
+		contentType = "image/webp"
+	}
+
+	log.Printf("[S3] Badge image upload - Key: %s, ContentType: %s", key, contentType)
+
+	// Don't force download for badge images (display in browser)
+	url, err := s.UploadFile(ctx, file, s.badgeBucket, key, contentType, s.badgePublicURL, false)
+	if err != nil {
+		log.Printf("[S3] ERROR: Badge image upload failed - BadgeID: %s, Key: %s, Error: %v", badgeID, key, err)
+		return "", err
+	}
+
+	log.Printf("[S3] Badge image upload completed - BadgeID: %s, URL: %s", badgeID, url)
+	return url, nil
 }
 
 // UploadFile uploads a file to S3 and returns the public URL

@@ -29,6 +29,7 @@ type LeaderboardResponse struct {
 // @Produce      json
 // @Param        page      query     int     false  "Page number (default: 1)"
 // @Param        page_size query     int     false  "Items per page (default: 100, max: 1000)"
+// @Param        period    query     string  false  "Time period: all, weekly, monthly (default: all)"
 // @Success      200       {object}  LeaderboardResponse  "Leaderboard entries"
 // @Failure      500       {string}  string  "Internal server error"
 // @Router       /api/leaderboard/pan-india [get]
@@ -39,6 +40,13 @@ func handleGetPanIndiaLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		// Get pagination parameters
 		page := 1
 		pageSize := 100
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+		if period != "all" && period != "weekly" && period != "monthly" {
+			period = "all"
+		}
 
 		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
@@ -61,7 +69,7 @@ func handleGetPanIndiaLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		leaderboardStore := store.NewLeaderboardStore(postgres)
 
 		// Get leaderboard entries
-		entries, err := leaderboardStore.GetPanIndiaLeaderboard(ctx, pageSize, offset)
+		entries, err := leaderboardStore.GetPanIndiaLeaderboard(ctx, pageSize, offset, period)
 		if err != nil {
 			log.Printf("Error getting pan-india leaderboard: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)
@@ -100,6 +108,7 @@ func handleGetPanIndiaLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 // @Param        state_id  query     string  true   "State ID"
 // @Param        page      query     int     false  "Page number (default: 1)"
 // @Param        page_size query     int     false  "Items per page (default: 100, max: 1000)"
+// @Param        period    query     string  false  "Time period: all, weekly, monthly (default: all)"
 // @Success      200       {object}  LeaderboardResponse  "Leaderboard entries"
 // @Failure      400       {string}  string  "Bad request - state_id required"
 // @Failure      500       {string}  string  "Internal server error"
@@ -118,6 +127,13 @@ func handleGetStateLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		// Get pagination parameters
 		page := 1
 		pageSize := 100
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+		if period != "all" && period != "weekly" && period != "monthly" {
+			period = "all"
+		}
 
 		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
@@ -140,7 +156,7 @@ func handleGetStateLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		leaderboardStore := store.NewLeaderboardStore(postgres)
 
 		// Get leaderboard entries
-		entries, err := leaderboardStore.GetStateLeaderboard(ctx, stateID, pageSize, offset)
+		entries, err := leaderboardStore.GetStateLeaderboard(ctx, stateID, pageSize, offset, period)
 		if err != nil {
 			log.Printf("Error getting state leaderboard: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)
@@ -180,6 +196,7 @@ func handleGetStateLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 // @Param        college_id query     string  true   "College ID"
 // @Param        page       query     int     false  "Page number (default: 1)"
 // @Param        page_size  query     int     false  "Items per page (default: 100, max: 1000)"
+// @Param        period     query     string  false  "Time period: all, weekly, monthly (default: all)"
 // @Success      200        {object}  LeaderboardResponse  "Leaderboard entries"
 // @Failure      400        {string}  string  "Bad request - college_id required"
 // @Failure      500        {string}  string  "Internal server error"
@@ -198,6 +215,13 @@ func handleGetCollegeLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		// Get pagination parameters
 		page := 1
 		pageSize := 100
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+		if period != "all" && period != "weekly" && period != "monthly" {
+			period = "all"
+		}
 
 		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
@@ -220,7 +244,7 @@ func handleGetCollegeLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 		leaderboardStore := store.NewLeaderboardStore(postgres)
 
 		// Get leaderboard entries
-		entries, err := leaderboardStore.GetCollegeLeaderboard(ctx, collegeID, pageSize, offset)
+		entries, err := leaderboardStore.GetCollegeLeaderboard(ctx, collegeID, pageSize, offset, period)
 		if err != nil {
 			log.Printf("Error getting college leaderboard: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)

@@ -89,6 +89,19 @@ func SendTaskRejectionNotification(hub *Hub, userID, taskID, taskTitle, rejectio
 	return SendNotification(hub, userID, NotificationTypeTaskRejected, title, message, data)
 }
 
+// SendTaskUpdateNotification sends a notification when a task is updated
+func SendTaskUpdateNotification(hub *Hub, userIDs []string, taskID, taskTitle string) error {
+	data := map[string]interface{}{
+		"task_id":    taskID,
+		"task_title": taskTitle,
+	}
+
+	title := "Task Updated"
+	message := fmt.Sprintf("Task '%s' has been updated", taskTitle)
+
+	return SendNotificationToMultiple(hub, userIDs, NotificationTypeTaskAssigned, title, message, data)
+}
+
 // PublishNotificationToRedis publishes a notification to Redis for distribution
 func PublishNotificationToRedis(hub *Hub, userID string, notification NotificationPayload) error {
 	if hub == nil || hub.redisClient == nil {

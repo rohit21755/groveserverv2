@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -742,6 +743,190 @@ func handleUpdateProfilePic(postgres *db.Postgres, cfg *env.Config) http.Handler
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(updatedUser); err != nil {
 			log.Printf("Error encoding response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// handleGetMyBadges handles getting badges for the authenticated user
+// @Summary      Get my badges
+// @Description  Get all badges earned by the authenticated user
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   store.UserBadge  "List of user badges"
+// @Failure      401  {string}  string  "Unauthorized"
+// @Failure      500  {string}  string  "Internal server error"
+// @Router       /api/user/badges [get]
+func handleGetMyBadges(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Get user ID from context
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Get user badges
+		badgeStore := store.NewBadgeStore(postgres)
+		badges, err := badgeStore.GetUserBadges(ctx, userID)
+		if err != nil {
+			log.Printf("Error getting user badges: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get badges: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(badges); err != nil {
+			log.Printf("Error encoding badges response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// handleGetMyTaskHistory handles getting task submission history for the authenticated user
+// @Summary      Get my task history
+// @Description  Get all task submissions (approved and rejected) for the authenticated user
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   store.Submission  "List of submissions"
+// @Failure      401  {string}  string  "Unauthorized"
+// @Failure      500  {string}  string  "Internal server error"
+// @Router       /api/user/tasks/history [get]
+func handleGetMyTaskHistory(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Get user ID from context
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Get user submissions
+		query := `
+			SELECT id, task_id, user_id, proof_url, status, admin_comment, reviewed_by, created_at, updated_at
+			FROM submissions
+			WHERE user_id = $1
+			ORDER BY created_at DESC
+		`
+
+		rows, err := postgres.DB.QueryContext(ctx, query, userID)
+		if err != nil {
+			log.Printf("Error getting user submissions: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get submissions: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var submissions []store.Submission
+		for rows.Next() {
+			var submission store.Submission
+			var adminComment, reviewedBy sql.NullString
+
+			err := rows.Scan(
+				&submission.ID, &submission.TaskID, &submission.UserID, &submission.ProofURL, &submission.Status,
+				&adminComment, &reviewedBy, &submission.CreatedAt, &submission.UpdatedAt,
+			)
+			if err != nil {
+				log.Printf("Error scanning submission: %v", err)
+				continue
+			}
+
+			if adminComment.Valid {
+				submission.AdminComment = adminComment.String
+			}
+			if reviewedBy.Valid {
+				submission.ReviewedBy = reviewedBy.String
+			}
+
+			submissions = append(submissions, submission)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(submissions); err != nil {
+			log.Printf("Error encoding submissions response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// handleRedeemStreak handles redeeming streak rewards
+// @Summary      Redeem streak reward
+// @Description  Redeem XP and badges based on current streak. Updates streak if needed.
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{}  "Streak reward redeemed"
+// @Failure      401  {string}  string  "Unauthorized"
+// @Failure      500  {string}  string  "Internal server error"
+// @Router       /api/user/streak/redeem [post]
+func handleRedeemStreak(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Get user ID from context
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Update streak first (in case user is active today)
+		streakStore := store.NewStreakStore(postgres)
+		err := streakStore.UpdateStreak(ctx, userID)
+		if err != nil {
+			log.Printf("Error updating streak: %v", err)
+			// Continue anyway
+		}
+
+		// Get current streak
+		streakDays, _, err := streakStore.GetUserStreak(ctx, userID)
+		if err != nil {
+			log.Printf("Error getting user streak: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get streak: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Redeem streak reward
+		xpReward, badgeIDs, err := streakStore.RedeemStreakReward(ctx, userID, streakDays)
+		if err != nil {
+			log.Printf("Error redeeming streak reward: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to redeem streak reward: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Get user to check for badge auto-awarding
+		userStore := store.NewUserStore(postgres)
+		user, err := userStore.GetUserByID(ctx, userID)
+		if err == nil {
+			// Check and award badges based on new XP/level
+			badgeStore := store.NewBadgeStore(postgres)
+			_ = badgeStore.CheckAndAwardBadges(ctx, userID, user.XP, user.Level)
+		}
+
+		response := map[string]interface{}{
+			"streak_days":  streakDays,
+			"xp_reward":    xpReward,
+			"badges_awarded": badgeIDs,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding streak redeem response: %v", err)
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
