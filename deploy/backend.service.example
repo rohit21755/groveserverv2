@@ -1,0 +1,25 @@
+# Example systemd unit for the backend API on EC2.
+# Copy to EC2: sudo cp backend.service.example /etc/systemd/system/backend.service
+# Edit paths and env, then: sudo systemctl daemon-reload && sudo systemctl enable --now backend
+
+[Unit]
+Description=Backend API (Gamified Ambassador)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/app
+ExecStart=/home/ec2-user/app/main
+Restart=always
+RestartSec=5
+# Load env from file (create /home/ec2-user/app/.env with DATABASE_URL, REDIS_URL, JWT_SECRET, etc.)
+EnvironmentFile=/home/ec2-user/app/.env
+# Or set inline:
+# Environment=DATABASE_URL=postgres://...
+# Environment=REDIS_URL=redis://...
+# Environment=JWT_SECRET=your-secret
+# Environment=PORT=8080
+
+[Install]
+WantedBy=multi-user.target

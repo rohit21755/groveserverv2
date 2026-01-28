@@ -1,0 +1,92 @@
+# Deploy backend to EC2 on push to main
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allow manual trigger from Actions tab
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    # Use environment secrets instead of repo secrets: create Settings → Environments → "production", add secrets there, then uncomment:
+    # environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Generate Swagger docs
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@latest
+          swag init -g cmd/api/main.go -o docs
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o main ./cmd/api
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          cp main deploy/
+          cp -r docs deploy/
+          cp -r migrations deploy/
+          # Optional: copy .env template if you use one on server
+          # cp .env.example deploy/.env
+          tar -czvf deploy.tar.gz -C deploy .
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Ensure deploy path on EC2
+        run: |
+          DEPLOY_PATH="${{ secrets.EC2_DEPLOY_PATH || '/home/ec2-user/app' }}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${DEPLOY_PATH}"
+
+      - name: Copy artifact to EC2
+        run: |
+          DEPLOY_PATH="${{ secrets.EC2_DEPLOY_PATH || '/home/ec2-user/app' }}"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:${DEPLOY_PATH}/deploy.tar.gz
+
+      - name: Deploy and restart on EC2
+        env:
+          DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH || '/home/ec2-user/app' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+            set -e
+            mkdir -p ${DEPLOY_PATH}
+            cd ${DEPLOY_PATH}
+            tar -xzvf deploy.tar.gz
+            rm -f deploy.tar.gz
+            if systemctl is-active --quiet backend 2>/dev/null; then
+              sudo systemctl restart backend
+              echo 'Service backend restarted.'
+            elif systemctl is-active --quiet api 2>/dev/null; then
+              sudo systemctl restart api
+              echo 'Service api restarted.'
+            else
+              pkill -f './main' 2>/dev/null || true
+              nohup ./main > app.log 2>&1 &
+              echo 'App started in background.'
+            fi
+          "
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

@@ -1044,6 +1044,46 @@ migrate -path ./migrations -database $DATABASE_URL version
 
 ## Deployment
 
+### EC2 Deployment (GitHub Actions)
+
+The repo includes a workflow that builds the app and deploys to an EC2 instance on push to `main` (or manually via **Actions → Deploy to EC2 → Run workflow**).
+
+**1. EC2 setup**
+
+- Create an EC2 instance (e.g. Amazon Linux 2 or Ubuntu).
+- Create a deploy user (e.g. `ec2-user`) and ensure the app directory exists, e.g. `mkdir -p /home/ec2-user/app`.
+- Create a `.env` file **on the EC2 server** in that directory (e.g. `/home/ec2-user/app/.env`) with `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, etc. Do **not** commit `.env` to the repo or deploy it from GitHub; it stays only on the server.
+- (Optional) Use systemd to run the app: copy `deploy/backend.service.example` to `/etc/systemd/system/backend.service`, edit paths and env, then:
+  ```bash
+  sudo systemctl daemon-reload && sudo systemctl enable --now backend
+  ```
+
+**2. GitHub secrets**
+
+You can add the secrets in **either** place:
+
+| Where | When to use |
+|-------|-------------|
+| **Repository secrets** | One EC2 (e.g. only production). Easiest. **Settings → Secrets and variables → Actions** → "Repository secrets" → New repository secret. |
+| **Environment secrets** | Multiple environments (staging + production) or you want approval/protection rules. Create an environment (e.g. "production") under **Settings → Environments**, add secrets there, then set `environment: production` in the deploy job (see workflow file). |
+
+Add these **four** (in Repository secrets **or** in your Environment’s secrets):
+
+| Secret           | Description                                      |
+|------------------|--------------------------------------------------|
+| `EC2_HOST`       | EC2 hostname or IP (e.g. `ec2-xx-xx-xx-xx.compute.amazonaws.com`) |
+| `EC2_USER`       | SSH user (e.g. `ec2-user` for Amazon Linux, `ubuntu` for Ubuntu) |
+| `EC2_SSH_KEY`    | Full contents of the private key (.pem) used to SSH into the instance |
+| `EC2_DEPLOY_PATH`| (Optional) App directory on EC2; default `/home/ec2-user/app` |
+
+- **Using Repository secrets:** Add all four under **Settings → Secrets and variables → Actions → Repository secrets**. No workflow change needed.
+- **Using Environment secrets:** Create **Settings → Environments → New environment** (e.g. `production`), open it → "Secrets" → add the four there. Then in `.github/workflows/deploy-ec2.yml` add `environment: production` under the job name (see comment in the workflow).
+
+**3. Deploy**
+
+- Push to `main` to trigger deploy, or run **Actions → Deploy to EC2 → Run workflow**.
+- The workflow builds the Go binary, uploads it and `docs/`, `migrations/` to EC2, then restarts the `backend` or `api` systemd service (or runs `./main` in the background if no service is found).
+
 ### Docker Deployment
 
 1. Build the image:

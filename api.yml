@@ -1,0 +1,664 @@
+openapi: 3.0.3
+info:
+  title: User API
+  description: API documentation for user-related endpoints only. All user routes require JWT authentication (Bearer token) unless otherwise noted.
+  version: 1.0.0
+
+servers:
+  - url: /api
+    description: API base path
+
+security:
+  - BearerAuth: []
+
+paths:
+  /user/me:
+    get:
+      summary: Get current user
+      description: Get the authenticated user's profile with state and college names.
+      operationId: getMe
+      tags:
+        - user
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Unauthorized
+        '404':
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/{id}:
+    get:
+      summary: Get user profile
+      description: Get a user's complete profile including completed tasks, following/followers count, college, and state.
+      operationId: getUser
+      tags:
+        - user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID (UUID)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          description: Bad request - User ID required
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/{id}/follow:
+    post:
+      summary: Follow user
+      description: Follow another user. The authenticated user will follow the user specified in the URL path.
+      operationId: followUser
+      tags:
+        - user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID to follow
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully followed user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Successfully followed user
+                  following_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: Bad request (cannot follow yourself, already following)
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                self:
+                  value: Cannot follow yourself
+                already:
+                  value: Already following this user
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/{id}/unfollow:
+    post:
+      summary: Unfollow user
+      description: Unfollow a user. The authenticated user will unfollow the user specified in the URL path.
+      operationId: unfollowUser
+      tags:
+        - user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID to unfollow
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully unfollowed user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Successfully unfollowed user
+                  following_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: Bad request (cannot unfollow yourself, not following)
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/resume:
+    post:
+      summary: Upload resume
+      description: Upload a resume file for the authenticated user. Only works if user hasn't uploaded a resume during registration.
+      operationId: uploadResume
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - resume
+              properties:
+                resume:
+                  type: string
+                  format: binary
+                  description: Resume file (PDF recommended, max 10MB)
+      responses:
+        '200':
+          description: Resume uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request (user already has resume or invalid file)
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      summary: Update resume
+      description: Update the resume file for the authenticated user. Replaces existing resume.
+      operationId: updateResume
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - resume
+              properties:
+                resume:
+                  type: string
+                  format: binary
+                  description: Resume file (PDF recommended, max 10MB)
+      responses:
+        '200':
+          description: Resume updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request - invalid file
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/profile-pic:
+    post:
+      summary: Upload profile picture
+      description: Upload a profile picture for the authenticated user. Only works if user hasn't uploaded a profile picture during registration.
+      operationId: uploadProfilePic
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - profile_pic
+              properties:
+                profile_pic:
+                  type: string
+                  format: binary
+                  description: Profile picture (JPG/PNG, max 10MB)
+      responses:
+        '200':
+          description: Profile picture uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request (user already has profile picture or invalid file)
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+    put:
+      summary: Update profile picture
+      description: Update the profile picture for the authenticated user. Replaces existing profile picture.
+      operationId: updateProfilePic
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - profile_pic
+              properties:
+                profile_pic:
+                  type: string
+                  format: binary
+                  description: Profile picture (JPG/PNG, max 10MB)
+      responses:
+        '200':
+          description: Profile picture updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request - invalid file
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/badges:
+    get:
+      summary: Get my badges
+      description: Get all badges earned by the authenticated user.
+      operationId: getMyBadges
+      tags:
+        - user
+      responses:
+        '200':
+          description: List of user badges
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserBadge'
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/tasks/history:
+    get:
+      summary: Get my task history
+      description: Get all task submissions (approved and rejected) for the authenticated user.
+      operationId: getMyTaskHistory
+      tags:
+        - user
+      responses:
+        '200':
+          description: List of submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Submission'
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /user/streak/redeem:
+    post:
+      summary: Redeem streak reward
+      description: Redeem XP and badges based on current streak. Updates streak if needed. Awards base XP (10 per day, capped at 100) plus any streak badges the user qualifies for.
+      operationId: redeemStreak
+      tags:
+        - user
+      responses:
+        '200':
+          description: Streak reward redeemed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  streak_days:
+                    type: integer
+                    description: Current streak length in days
+                  xp_reward:
+                    type: integer
+                    description: Total XP awarded
+                  badges_awarded:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                    description: IDs of badges awarded (if any)
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        state_id:
+          type: string
+        state_name:
+          type: string
+        college_id:
+          type: string
+        college_name:
+          type: string
+        role:
+          type: string
+          example: student
+        xp:
+          type: integer
+        level:
+          type: integer
+        coins:
+          type: integer
+        bio:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        resume_url:
+          type: string
+          format: uri
+        resume_visibility:
+          type: string
+        referral_code:
+          type: string
+        referred_by_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    UserProfile:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        completed_tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+        following_count:
+          type: integer
+        followers_count:
+          type: integer
+        state_name:
+          type: string
+        college_name:
+          type: string
+
+    FeedItem:
+      type: object
+      properties:
+        id:
+          type: string
+        submission_id:
+          type: string
+        user_id:
+          type: string
+        task_id:
+          type: string
+        user_name:
+          type: string
+        user_avatar:
+          type: string
+        task_title:
+          type: string
+        task_xp:
+          type: integer
+        proof_url:
+          type: string
+        reaction_count:
+          type: integer
+        comment_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    UserBadge:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        badge_id:
+          type: string
+          format: uuid
+        badge:
+          $ref: '#/components/schemas/Badge'
+        earned_at:
+          type: string
+          format: date-time
+
+    Badge:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        icon:
+          type: string
+        rule:
+          type: string
+        xp:
+          type: integer
+        required_level:
+          type: integer
+        image_url:
+          type: string
+          format: uri
+        is_streak_badge:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Submission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        proof_url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+        admin_comment:
+          type: string
+          description: Admin comment (e.g. rejection reason)
+        reviewed_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
