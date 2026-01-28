@@ -1073,7 +1073,7 @@ Add these **four** (in Repository secrets **or** in your Environment’s secrets
 |------------------|--------------------------------------------------|
 | `EC2_HOST`       | EC2 hostname or IP (e.g. `ec2-xx-xx-xx-xx.compute.amazonaws.com`) |
 | `EC2_USER`       | SSH user (e.g. `ec2-user` for Amazon Linux, `ubuntu` for Ubuntu) |
-| `EC2_SSH_KEY`    | Full contents of the private key (.pem) used to SSH into the instance |
+| `EC2_SSH_KEY`    | **Base64-encoded** private key (.pem). Encode with: `base64 -w 0 your-key.pem` (Linux) or `base64 -i your-key.pem` (Mac), then paste the single line. (Using raw PEM in secrets often causes "error in libcrypto" / Permission denied.) |
 | `EC2_DEPLOY_PATH`| (Optional) App directory on EC2; default `/home/ec2-user/app` |
 
 - **Using Repository secrets:** Add all four under **Settings → Secrets and variables → Actions → Repository secrets**. No workflow change needed.
