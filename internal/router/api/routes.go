@@ -36,6 +36,8 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 		// Streak routes (daily check-in counts toward streak)
 		r.Post("/streak/check-in", handleStreakCheckIn(postgres))
 		r.Post("/streak/redeem", handleRedeemStreak(postgres))
+		// Add XP to own account (user only, not admin)
+		r.Post("/xp", handleAddXPForUser(postgres, redisClient))
 	})
 
 	// Task routes (protected with JWT)
@@ -127,6 +129,9 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 		r.Route("/badges", func(r chi.Router) {
 			r.Post("/", handleCreateBadge(postgres, cfg))
 		})
+
+		// User management – add XP to a user's account
+		r.Post("/users/xp", handleAddXP(postgres, redisClient))
 
 		// Submission management
 		r.Route("/submissions", func(r chi.Router) {

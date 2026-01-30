@@ -20,6 +20,8 @@ const (
 	XPSourceFeedPost     XPSource = "feed_post"     // XP from posting on feed
 	XPSourceFeedReaction XPSource = "feed_reaction" // XP from reacting to feed
 	XPSourceComment      XPSource = "comment"       // XP from commenting
+	XPSourceAdminGrant   XPSource = "admin_grant"   // XP added by admin (manual grant)
+	XPSourceUserAdd      XPSource = "user_add"      // XP added by user to own account (e.g. redeem code, claim reward)
 	// Add more sources as needed in the future
 )
 
@@ -44,10 +46,10 @@ func NewXPStore(postgres *db.Postgres) *XPStore {
 
 // AwardXPRequest represents the request to award XP
 type AwardXPRequest struct {
-	UserID   string    `json:"user_id"`
-	XP       int       `json:"xp"`
-	Source   XPSource  `json:"source"`
-	SourceID string    `json:"source_id,omitempty"` // Optional: ID of the source (e.g., task_id, submission_id)
+	UserID   string   `json:"user_id"`
+	XP       int      `json:"xp"`
+	Source   XPSource `json:"source"`
+	SourceID string   `json:"source_id,omitempty"` // Optional: ID of the source (e.g., task_id, submission_id)
 }
 
 // AwardXP awards XP to a user and logs it

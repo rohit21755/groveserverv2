@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rohit21755/groveserverv2/internal/db"
 	"github.com/rohit21755/groveserverv2/internal/env"
+	"github.com/rohit21755/groveserverv2/internal/router/ws"
 	"github.com/rohit21755/groveserverv2/internal/storage"
 	"github.com/rohit21755/groveserverv2/internal/store"
 )
@@ -860,6 +861,89 @@ func handleGetMyTaskHistory(postgres *db.Postgres) http.HandlerFunc {
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// UserAddXPRequest is the body for adding XP to own account (user only, not admin).
+type UserAddXPRequest struct {
+	XP     int    `json:"xp"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// handleAddXPForUser adds XP to the authenticated user's own account. User-only route (no admin).
+// @Summary      Add XP to my account
+// @Description  Add XP to your own account. JWT required. Use for redeeming codes, claiming rewards, etc. Logs in xp_logs (source user_add) and broadcasts leaderboard update.
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  UserAddXPRequest  true  "xp (required), optional reason"
+// @Success      200   {object}  map[string]interface{}  "xp_awarded, new_total_xp, xp_log_id"
+// @Failure      400   {string}  string  "Bad request"
+// @Failure      401   {string}  string  "Unauthorized"
+// @Failure      500   {string}  string  "Internal server error"
+// @Router       /api/user/xp [post]
+func handleAddXPForUser(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		var req UserAddXPRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.XP <= 0 {
+			http.Error(w, "xp must be greater than 0", http.StatusBadRequest)
+			return
+		}
+
+		xpStore := store.NewXPStore(postgres)
+		xpLog, err := xpStore.AwardXP(ctx, store.AwardXPRequest{
+			UserID:   userID,
+			XP:       req.XP,
+			Source:   store.XPSourceUserAdd,
+			SourceID: req.Reason,
+		})
+		if err != nil {
+			log.Printf("Error adding XP for user %s: %v", userID, err)
+			http.Error(w, fmt.Sprintf("Failed to add XP: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		userStore := store.NewUserStore(postgres)
+		user, err := userStore.GetUserByID(ctx, userID)
+		if err != nil {
+			log.Printf("Error getting user after XP award: %v", err)
+		} else if redisClient != nil {
+			leaderboardStore := store.NewLeaderboardStore(postgres)
+			rank, _ := leaderboardStore.GetUserRank(ctx, userID)
+			newXP := user.XP
+			ws.BroadcastLeaderboardUpdate(redisClient, "pan-india", "", userID, rank, newXP)
+			if user.StateID != "" {
+				ws.BroadcastLeaderboardUpdate(redisClient, "state", user.StateID, userID, rank, newXP)
+			}
+			if user.CollegeID != "" {
+				ws.BroadcastLeaderboardUpdate(redisClient, "college", user.CollegeID, userID, rank, newXP)
+			}
+		}
+
+		response := map[string]interface{}{
+			"xp_awarded": req.XP,
+			"xp_log_id":  xpLog.ID,
+		}
+		if user != nil {
+			response["new_total_xp"] = user.XP
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }
 

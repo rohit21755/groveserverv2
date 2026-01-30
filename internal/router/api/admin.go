@@ -771,6 +771,109 @@ func handleRejectSubmission(postgres *db.Postgres, cfg *env.Config) http.Handler
 	}
 }
 
+// AddXPRequest represents the request body for adding XP to a user (admin)
+type AddXPRequest struct {
+	UserID string `json:"user_id"`
+	XP     int    `json:"xp"`
+	Reason string `json:"reason,omitempty"` // Optional; stored as source_id in xp_logs
+}
+
+// handleAddXP adds XP to a user's account (admin only). Logs in xp_logs and broadcasts leaderboard update.
+// @Summary      Add XP to user
+// @Description  Add XP to a user's account. Admin only. Logs the grant in xp_logs (source admin_grant). Broadcasts leaderboard update.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  AddXPRequest  true  "user_id, xp (required), optional reason"
+// @Success      200   {object}  object  "xp_awarded, new_total_xp, xp_log_id"
+// @Failure      400   {string}  string  "Bad request"
+// @Failure      401   {string}  string  "Unauthorized"
+// @Failure      404   {string}  string  "User not found"
+// @Failure      500   {string}  string  "Internal server error"
+// @Router       /admin/users/xp [post]
+func handleAddXP(postgres *db.Postgres, redisClient *db.Redis) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		adminUserID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		adminStore := store.NewAdminStore(postgres)
+		_, err := adminStore.GetAdminByID(ctx, adminUserID)
+		if err != nil {
+			log.Printf("Error verifying admin: %v", err)
+			http.Error(w, "Admin not found", http.StatusUnauthorized)
+			return
+		}
+
+		var req AddXPRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.UserID == "" {
+			http.Error(w, "user_id is required", http.StatusBadRequest)
+			return
+		}
+		if req.XP <= 0 {
+			http.Error(w, "xp must be greater than 0", http.StatusBadRequest)
+			return
+		}
+
+		xpStore := store.NewXPStore(postgres)
+		xpLog, err := xpStore.AwardXP(ctx, store.AwardXPRequest{
+			UserID:   req.UserID,
+			XP:       req.XP,
+			Source:   store.XPSourceAdminGrant,
+			SourceID: req.Reason,
+		})
+		if err != nil {
+			log.Printf("Error awarding XP: %v", err)
+			if err.Error() == "user not found" {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, fmt.Sprintf("Failed to add XP: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		userStore := store.NewUserStore(postgres)
+		user, err := userStore.GetUserByID(ctx, req.UserID)
+		if err != nil {
+			log.Printf("Error getting user after XP award: %v", err)
+		} else {
+			leaderboardStore := store.NewLeaderboardStore(postgres)
+			rank, _ := leaderboardStore.GetUserRank(ctx, req.UserID)
+			newXP := user.XP
+			ws.BroadcastLeaderboardUpdate(redisClient, "pan-india", "", req.UserID, rank, newXP)
+			if user.StateID != "" {
+				ws.BroadcastLeaderboardUpdate(redisClient, "state", user.StateID, req.UserID, rank, newXP)
+			}
+			if user.CollegeID != "" {
+				ws.BroadcastLeaderboardUpdate(redisClient, "college", user.CollegeID, req.UserID, rank, newXP)
+			}
+		}
+
+		response := map[string]interface{}{
+			"user_id":    req.UserID,
+			"xp_awarded": req.XP,
+			"xp_log_id":  xpLog.ID,
+		}
+		if user != nil {
+			response["new_total_xp"] = user.XP
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(response)
+	}
+}
+
 // CreateBadgeRequest represents the request body for creating a badge
 type CreateBadgeRequest struct {
 	Name          string `json:"name"`

@@ -4,16 +4,22 @@ info:
   description: |
     API documentation including:
     - **Auth** – login, register, refresh (public); returns JWT for protected routes.
-    - **User** – profile, badges, task history, streak, resume, profile pic (JWT required).
+    - **User** – profile, badges, task history, streak (daily check-in, redeem), resume, profile pic (JWT required).
     - **Tasks** – get assigned tasks with **user_status** (completed, viewing, rejected, not_started); submit proof (JWT required).
-    - **Leaderboard** – pan-india, state, college; each with optional period (all, weekly, monthly) or dedicated /weekly and /monthly routes; entry has name, rank, xp, profile_image, id, state, college.
+    - **Feed** – get feed, user feed; react and comment (JWT for react/comment).
+    - **Leaderboard** – pan-india, state, college; optional period (all, weekly, monthly) or dedicated /weekly and /monthly; entry has name, rank, xp, profile_image, id, state, college.
+    - **Chat** – list rooms, get room (public).
+    - **Notifications** – list notifications (JWT required).
     - **States** – list all states (public).
     - **Colleges** – list colleges by state (public).
+    - **Admin** – base path `/admin`; login, create admin, states, colleges, tasks, badges, add XP (POST /admin/users/xp), submissions approve/reject; admin JWT required.
   version: 1.0.0
 
 servers:
   - url: /api
-    description: API base path
+    description: Main API base path (auth, user, tasks, feed, leaderboard, chat, notifications, states, colleges)
+  - url: /admin
+    description: Admin API base path (login, create, states, colleges, tasks, badges, users/xp, submissions)
 
 security:
   - BearerAuth: []
@@ -837,6 +843,44 @@ paths:
                 type: string
               example: "Failed to redeem streak"
 
+  /user/xp:
+    post:
+      summary: Add XP to my account (user only)
+      description: |
+        Add XP to your own account. User-only route (no admin). Use for redeeming codes, claiming rewards, etc.
+        JWT required. Logs in xp_logs (source user_add) and broadcasts leaderboard update.
+      operationId: addXPForUser
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAddXPRequest'
+      responses:
+        '200':
+          description: XP added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  xp_awarded:
+                    type: integer
+                  new_total_xp:
+                    type: integer
+                    description: Your total XP after the grant
+                  xp_log_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: Bad request – xp must be greater than 0
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
   /tasks:
     get:
       summary: Get tasks (completed and ongoing)
@@ -1004,6 +1048,160 @@ paths:
               schema:
                 type: string
               example: "Failed to upload proof file"
+
+  /feed:
+    get:
+      summary: Get feed
+      description: Get feed entries. Public; optional JWT for state/college filtering.
+      operationId: getFeed
+      tags:
+        - feed
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Feed entries
+        '500':
+          description: Internal server error
+
+  /feed/user/{userId}:
+    get:
+      summary: Get user feed
+      description: Get feed entries for a specific user. Public.
+      operationId: getUserFeed
+      tags:
+        - feed
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User feed entries
+        '500':
+          description: Internal server error
+
+  /feed/{feedId}/react:
+    post:
+      summary: React to feed
+      description: Add or update reaction to a feed entry. JWT required.
+      operationId: reactToFeed
+      tags:
+        - feed
+      parameters:
+        - name: feedId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reaction_type:
+                  type: string
+                  description: e.g. like, love
+      responses:
+        '200':
+          description: Reaction recorded
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /feed/{feedId}/comment:
+    post:
+      summary: Comment on feed
+      description: Add a comment to a feed entry. JWT required.
+      operationId: commentOnFeed
+      tags:
+        - feed
+      parameters:
+        - name: feedId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+      responses:
+        '200':
+          description: Comment recorded
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /chat/rooms:
+    get:
+      summary: Get chat rooms
+      description: List chat rooms. Public.
+      operationId: getChatRooms
+      tags:
+        - chat
+      responses:
+        '200':
+          description: List of chat rooms
+        '500':
+          description: Internal server error
+
+  /chat/rooms/{id}:
+    get:
+      summary: Get chat room
+      description: Get a single chat room by ID. Public.
+      operationId: getChatRoom
+      tags:
+        - chat
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chat room details
+        '500':
+          description: Internal server error
+
+  /notifications:
+    get:
+      summary: Get notifications
+      description: Get notifications for the authenticated user. JWT required.
+      operationId: getNotifications
+      tags:
+        - notifications
+      responses:
+        '200':
+          description: List of notifications
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
 
   /leaderboard/pan-india:
     get:
@@ -1467,6 +1665,50 @@ paths:
                 type: string
               example: "Failed to fetch colleges"
 
+  # ----- Admin (JWT admin token required; base path /admin) -----
+  /admin/users/xp:
+    post:
+      summary: Add XP to user (admin)
+      description: Add XP to a user's account. Admin only. Logs the grant in xp_logs (source admin_grant). Broadcasts leaderboard update. Requires admin JWT.
+      operationId: addXPToUser
+      tags:
+        - admin
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddXPRequest'
+      responses:
+        '200':
+          description: XP added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  xp_awarded:
+                    type: integer
+                  new_total_xp:
+                    type: integer
+                    description: User's total XP after the grant (if available)
+                  xp_log_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: Bad request – user_id required, xp must be > 0
+        '401':
+          description: Unauthorized – admin token required
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1483,6 +1725,39 @@ components:
         token:
           type: string
           description: The old JWT token (valid or expired)
+
+    AddXPRequest:
+      type: object
+      description: Admin request to add XP to a user's account
+      required:
+        - user_id
+        - xp
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: User to award XP to
+        xp:
+          type: integer
+          minimum: 1
+          description: Amount of XP to add
+        reason:
+          type: string
+          description: Optional reason (stored as source_id in xp_logs)
+
+    UserAddXPRequest:
+      type: object
+      description: User request to add XP to own account (no admin)
+      required:
+        - xp
+      properties:
+        xp:
+          type: integer
+          minimum: 1
+          description: Amount of XP to add to your account
+        reason:
+          type: string
+          description: Optional reason (e.g. redeem code; stored as source_id in xp_logs)
 
     LoginRequest:
       type: object
