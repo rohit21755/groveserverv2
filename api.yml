@@ -1,7 +1,14 @@
 openapi: 3.0.3
 info:
-  title: User API
-  description: API documentation for user-related endpoints only. All user routes require JWT authentication (Bearer token) unless otherwise noted.
+  title: API
+  description: |
+    API documentation including:
+    - **Auth** – login, register, refresh (public); returns JWT for protected routes.
+    - **User** – profile, badges, task history, streak, resume, profile pic (JWT required).
+    - **Tasks** – get assigned tasks with **user_status** (completed, viewing, rejected, not_started); submit proof (JWT required).
+    - **Leaderboard** – pan-india, state, college; each with optional period (all, weekly, monthly) or dedicated /weekly and /monthly routes; entry has name, rank, xp, profile_image, id, state, college.
+    - **States** – list all states (public).
+    - **Colleges** – list colleges by state (public).
   version: 1.0.0
 
 servers:
@@ -12,6 +19,206 @@ security:
   - BearerAuth: []
 
 paths:
+  /auth/login:
+    post:
+      summary: User login
+      description: Authenticate with email and password. Returns JWT token and user data. Use the token in the Authorization header as Bearer &lt;token&gt; for protected routes.
+      operationId: login
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                user:
+                  id: "550e8400-e29b-41d4-a716-446655440000"
+                  name: "John Doe"
+                  email: "john@example.com"
+                  state_id: "state-uuid"
+                  state_name: "Maharashtra"
+                  college_id: "college-uuid"
+                  college_name: "Example College"
+                  role: "student"
+                  xp: 100
+                  level: 1
+        '400':
+          description: Bad request - invalid input (email and password required)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Email and password are required"
+        '401':
+          description: Invalid credentials
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Invalid email or password"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to generate token"
+
+  /auth/register:
+    post:
+      summary: User registration
+      description: |
+        Register a new user. Required: name, email, password, state_id, college_id.
+        Optional: referral_code, resume (file), profile_pic (file).
+        Returns JWT token and user for automatic login.
+      operationId: register
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - name
+                - email
+                - password
+                - state_id
+                - college_id
+              properties:
+                name:
+                  type: string
+                  description: User's full name
+                email:
+                  type: string
+                  format: email
+                  description: User's email (must be unique)
+                password:
+                  type: string
+                  format: password
+                  description: User's password
+                state_id:
+                  type: string
+                  description: State ID (from GET /states)
+                college_id:
+                  type: string
+                  description: College ID (from GET /states/{stateId}/colleges)
+                referral_code:
+                  type: string
+                  description: Optional referral code of the referrer
+                resume:
+                  type: string
+                  format: binary
+                  description: Optional resume file (PDF recommended, max 10MB)
+                profile_pic:
+                  type: string
+                  format: binary
+                  description: Optional profile picture (JPG/PNG, max 10MB)
+      responses:
+        '201':
+          description: User created; returns token and user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+              example:
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                user:
+                  id: "660e8400-e29b-41d4-a716-446655440001"
+                  name: "Jane Doe"
+                  email: "jane@example.com"
+                  state_id: "state-uuid"
+                  college_id: "college-uuid"
+                  role: "student"
+                  xp: 0
+                  level: 1
+        '400':
+          description: Bad request - missing required fields or invalid data
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Missing required fields: name, email, password, state_id, college_id are required"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to register user"
+
+  /auth/refresh:
+    post:
+      summary: Refresh token
+      description: |
+        Exchange an old JWT (valid or expired) for a new one. Validates the signature of the old token;
+        if valid, returns a new token and user. Token can be sent in the request body as {"token": "..."}
+        or in the Authorization header as Bearer &lt;token&gt;.
+      operationId: refreshToken
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: New token and user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                user:
+                  id: "550e8400-e29b-41d4-a716-446655440000"
+                  name: "John Doe"
+                  email: "john@example.com"
+                  state_id: "state-uuid"
+                  state_name: "Maharashtra"
+                  college_id: "college-uuid"
+                  college_name: "Example College"
+                  role: "student"
+                  xp: 100
+                  level: 1
+        '400':
+          description: Bad request - token required
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Token required (body.token or Authorization: Bearer <token>)"
+        '401':
+          description: Invalid or expired token
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Invalid or expired token"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to generate token"
+
   /user/me:
     get:
       summary: Get current user
@@ -26,25 +233,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                name: "John Doe"
+                email: "john@example.com"
+                state_id: "state-uuid"
+                state_name: "Maharashtra"
+                college_id: "college-uuid"
+                college_name: "Example College"
+                role: "student"
+                xp: 150
+                level: 2
+                coins: 10
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
-                example: Unauthorized
+              example: "Unauthorized"
         '404':
           description: User not found
           content:
             text/plain:
               schema:
                 type: string
+              example: "User not found"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to retrieve user"
 
   /user/{id}:
     get:
@@ -68,24 +289,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserProfile'
+              example:
+                user:
+                  id: "550e8400-e29b-41d4-a716-446655440000"
+                  name: "John Doe"
+                  email: "john@example.com"
+                  state_name: "Maharashtra"
+                  college_name: "Example College"
+                  xp: 150
+                  level: 2
+                completed_tasks: []
+                following_count: 5
+                followers_count: 12
+                state_name: "Maharashtra"
+                college_name: "Example College"
         '400':
           description: Bad request - User ID required
           content:
             text/plain:
               schema:
                 type: string
+              example: "User ID required"
         '404':
           description: User not found
           content:
             text/plain:
               schema:
                 type: string
+              example: "User not found"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to get user profile"
 
   /user/{id}/follow:
     post:
@@ -116,6 +354,9 @@ paths:
                   following_id:
                     type: string
                     format: uuid
+              example:
+                message: "Successfully followed user"
+                following_id: "550e8400-e29b-41d4-a716-446655440000"
         '400':
           description: Bad request (cannot follow yourself, already following)
           content:
@@ -124,27 +365,30 @@ paths:
                 type: string
               examples:
                 self:
-                  value: Cannot follow yourself
+                  value: "Cannot follow yourself"
                 already:
-                  value: Already following this user
+                  value: "Already following this user"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '404':
           description: User not found
           content:
             text/plain:
               schema:
                 type: string
+              example: "User not found"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to follow user"
 
   /user/{id}/unfollow:
     post:
@@ -175,24 +419,30 @@ paths:
                   following_id:
                     type: string
                     format: uuid
+              example:
+                message: "Successfully unfollowed user"
+                following_id: "550e8400-e29b-41d4-a716-446655440000"
         '400':
           description: Bad request (cannot unfollow yourself, not following)
           content:
             text/plain:
               schema:
                 type: string
+              example: "Not following this user"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to unfollow user"
 
   /user/resume:
     post:
@@ -221,30 +471,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                name: "John Doe"
+                resume_url: "https://bucket.s3.amazonaws.com/resumes/user-resume.pdf"
         '400':
           description: Bad request (user already has resume or invalid file)
           content:
             text/plain:
               schema:
                 type: string
+              example: "User already has a resume"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '404':
           description: User not found
           content:
             text/plain:
               schema:
                 type: string
+              example: "User not found"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to upload resume"
     put:
       summary: Update resume
       description: Update the resume file for the authenticated user. Replaces existing resume.
@@ -271,24 +529,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                resume_url: "https://bucket.s3.amazonaws.com/resumes/user-resume-v2.pdf"
         '400':
           description: Bad request - invalid file
           content:
             text/plain:
               schema:
                 type: string
+              example: "Invalid file type"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to update resume"
 
   /user/profile-pic:
     post:
@@ -317,30 +581,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                avatar_url: "https://bucket.s3.amazonaws.com/profile/user-avatar.jpg"
         '400':
           description: Bad request (user already has profile picture or invalid file)
           content:
             text/plain:
               schema:
                 type: string
+              example: "User already has a profile picture"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '404':
           description: User not found
           content:
             text/plain:
               schema:
                 type: string
+              example: "User not found"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to upload profile picture"
     put:
       summary: Update profile picture
       description: Update the profile picture for the authenticated user. Replaces existing profile picture.
@@ -367,24 +638,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                avatar_url: "https://bucket.s3.amazonaws.com/profile/user-avatar-new.jpg"
         '400':
           description: Bad request - invalid file
           content:
             text/plain:
               schema:
                 type: string
+              example: "Invalid file type"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to update profile picture"
 
   /user/badges:
     get:
@@ -402,47 +679,117 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/UserBadge'
+              example:
+                - user_id: "550e8400-e29b-41d4-a716-446655440000"
+                  badge_id: "660e8400-e29b-41d4-a716-446655440002"
+                  earned_at: "2025-01-15T10:00:00Z"
+                  badge:
+                    id: "660e8400-e29b-41d4-a716-446655440002"
+                    name: "First Task"
+                    xp: 10
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to get badges"
 
   /user/tasks/history:
     get:
       summary: Get my task history
-      description: Get all task submissions (approved and rejected) for the authenticated user.
+      description: |
+        Get all task submissions (approved, rejected, and pending) for the authenticated user.
+        Submission **status** is the DB value (pending | approved | rejected). When **pending**, the task appears with **user_status** `viewing` in GET /tasks.
       operationId: getMyTaskHistory
       tags:
         - user
       responses:
         '200':
-          description: List of submissions
+          description: List of user submissions (all statuses)
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Submission'
+              example:
+                - id: "770e8400-e29b-41d4-a716-446655440003"
+                  task_id: "880e8400-e29b-41d4-a716-446655440004"
+                  user_id: "550e8400-e29b-41d4-a716-446655440000"
+                  proof_url: "https://example.com/proof.jpg"
+                  status: "approved"
+                  created_at: "2025-01-20T14:00:00Z"
+                - id: "bb0e8400-e29b-41d4-a716-446655440007"
+                  task_id: "aa0e8400-e29b-41d4-a716-446655440006"
+                  user_id: "550e8400-e29b-41d4-a716-446655440000"
+                  proof_url: "https://example.com/resume-proof.jpg"
+                  status: "pending"
+                  created_at: "2025-01-21T10:00:00Z"
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to get task history"
+
+  /user/streak/check-in:
+    post:
+      summary: Daily streak check-in
+      description: |
+        Record a daily check-in to the app. Daily check-ins count toward the user's streak (consecutive days).
+        Call when the user opens the app or explicitly checks in. Same-day repeated calls are idempotent (no change).
+        Returns current streak_days and streak_started_at (ISO 8601). JWT required.
+      operationId: streakCheckIn
+      tags:
+        - user
+      responses:
+        '200':
+          description: Check-in recorded; returns current streak
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  streak_days:
+                    type: integer
+                    description: Current consecutive-day streak length
+                  streak_started_at:
+                    type: string
+                    format: date-time
+                    description: Start of current streak (ISO 8601)
+              example:
+                streak_days: 5
+                streak_started_at: "2025-01-26T00:00:00Z"
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Unauthorized"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to record check-in"
 
   /user/streak/redeem:
     post:
@@ -471,18 +818,654 @@ paths:
                       type: string
                       format: uuid
                     description: IDs of badges awarded (if any)
+              example:
+                streak_days: 7
+                xp_reward: 70
+                badges_awarded: ["660e8400-e29b-41d4-a716-446655440002"]
         '401':
           description: Unauthorized
           content:
             text/plain:
               schema:
                 type: string
+              example: "Unauthorized"
         '500':
           description: Internal server error
           content:
             text/plain:
               schema:
                 type: string
+              example: "Failed to redeem streak"
+
+  /tasks:
+    get:
+      summary: Get tasks (completed and ongoing)
+      description: |
+        Get all tasks assigned to the authenticated user. Each task includes **user_status** (completed, viewing, rejected, not_started) so you can show completed vs ongoing from one route.
+
+        **Task submission flow:**
+        - **not_started** → user has not submitted. Use POST /tasks/{id}/submit to submit proof.
+        - **viewing** → user submitted; submission under review (DB pending). Cannot resubmit until approved or rejected.
+        - **rejected** → submission rejected. User may resubmit via POST /tasks/{id}/submit if task deadline has not passed.
+        - **completed** → submission approved. Task is done for the user; cannot resubmit.
+      operationId: getTasks
+      tags:
+        - task
+      responses:
+        '200':
+          description: List of tasks with user_status (completed | viewing | rejected | not_started)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskWithUserStatus'
+              example:
+                - id: "880e8400-e29b-41d4-a716-446655440004"
+                  title: "Complete your profile"
+                  description: "Add your bio and profile picture"
+                  xp: 25
+                  type: "one_time"
+                  proof_type: "image"
+                  priority: "normal"
+                  is_flash: false
+                  is_weekly: false
+                  created_by: "admin-uuid"
+                  created_at: "2025-01-15T09:00:00Z"
+                  status: "ongoing"
+                  user_status: "completed"
+                  submission_id: "770e8400-e29b-41d4-a716-446655440003"
+                - id: "990e8400-e29b-41d4-a716-446655440005"
+                  title: "Share post"
+                  description: "Share our post on social media"
+                  xp: 15
+                  type: "one_time"
+                  proof_type: "image"
+                  priority: "normal"
+                  is_flash: false
+                  is_weekly: false
+                  created_by: "admin-uuid"
+                  created_at: "2025-01-16T09:00:00Z"
+                  status: "ongoing"
+                  user_status: "not_started"
+                  submission_id: ""
+                - id: "aa0e8400-e29b-41d4-a716-446655440006"
+                  title: "Upload resume"
+                  description: "Upload your resume"
+                  xp: 50
+                  type: "one_time"
+                  proof_type: "image"
+                  priority: "high"
+                  is_flash: false
+                  is_weekly: false
+                  created_by: "admin-uuid"
+                  created_at: "2025-01-17T09:00:00Z"
+                  status: "ongoing"
+                  user_status: "viewing"
+                  submission_id: "bb0e8400-e29b-41d4-a716-446655440007"
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Unauthorized"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to get tasks"
+
+  /tasks/{id}/submit:
+    post:
+      summary: Submit task
+      description: |
+        Submit a task with proof file (image or video). Proof is uploaded to S3.
+        Creates a submission with **status** `pending`. The task then appears with **user_status** `viewing` in GET /tasks (under review).
+
+        **Resubmission:** Allowed only if the previous submission was **rejected** and the task deadline has not passed. On resubmit, the same submission row is updated (new proof, status back to `pending`).
+
+        **Not allowed:** Already approved; or pending (under review); or rejected but task expired.
+      operationId: submitTask
+      tags:
+        - task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (UUID)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - proof
+              properties:
+                proof:
+                  type: string
+                  format: binary
+                  description: Proof file – image (JPG, PNG, GIF, WEBP) or video (MP4, MOV, AVI, MKV, WEBM), max 50MB
+      responses:
+        '201':
+          description: Submission created or updated (resubmission). Status `pending`; task shows as `viewing` in GET /tasks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+              example:
+                id: "770e8400-e29b-41d4-a716-446655440003"
+                task_id: "880e8400-e29b-41d4-a716-446655440004"
+                user_id: "550e8400-e29b-41d4-a716-446655440000"
+                proof_url: "https://bucket.s3.amazonaws.com/task-proofs/task-id/user-id_proof.jpg"
+                status: "pending"
+                created_at: "2025-01-20T14:00:00Z"
+        '400':
+          description: Bad request – task expired, not started, already submitted, or invalid file
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                expired:
+                  value: "Task has expired"
+                not_started:
+                  value: "Task has not started yet"
+                already_approved:
+                  value: "Task already approved. Cannot resubmit."
+                pending:
+                  value: "Task submission is pending review. Cannot resubmit."
+                rejected_expired:
+                  value: "Task has expired. Cannot resubmit rejected submission."
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Unauthorized"
+        '404':
+          description: Task not found
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Task not found"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to upload proof file"
+
+  /leaderboard/pan-india:
+    get:
+      summary: Get pan-India leaderboard
+      description: |
+        Get the pan-India leaderboard. Returns name, rank, xp, profile image, id, state, and college for each entry.
+        Frontend can filter by state or college using state_id and college_id. No authentication required.
+      operationId: getPanIndiaLeaderboard
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: Page number (default 1)
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          description: Items per page (default 100, max 1000)
+          schema:
+            type: integer
+            default: 100
+        - name: period
+          in: query
+          required: false
+          description: Time period – all, weekly, monthly
+          schema:
+            type: string
+            enum: [all, weekly, monthly]
+            default: all
+      responses:
+        '200':
+          description: Pan-India leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+              example:
+                entries:
+                  - id: "550e8400-e29b-41d4-a716-446655440000"
+                    name: "Alice"
+                    rank: 1
+                    xp: 1500
+                    profile_image: "https://bucket.s3.amazonaws.com/profile/alice.jpg"
+                    state_id: "state-uuid-1"
+                    state_name: "Maharashtra"
+                    college_id: "college-uuid-1"
+                    college_name: "Example College"
+                  - id: "660e8400-e29b-41d4-a716-446655440001"
+                    name: "Bob"
+                    rank: 2
+                    xp: 1200
+                    profile_image: ""
+                    state_id: "state-uuid-2"
+                    state_name: "Karnataka"
+                    college_id: "college-uuid-2"
+                    college_name: "Another College"
+                type: pan-india
+                page: 1
+                page_size: 100
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /leaderboard/pan-india/weekly:
+    get:
+      summary: Get pan-India leaderboard (weekly)
+      description: Pan-India leaderboard for XP earned in the last 7 days. Same entry shape as GET /leaderboard/pan-india. No authentication required.
+      operationId: getPanIndiaLeaderboardWeekly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Pan-India weekly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '500':
+          description: Internal server error
+
+  /leaderboard/pan-india/monthly:
+    get:
+      summary: Get pan-India leaderboard (monthly)
+      description: Pan-India leaderboard for XP earned in the last 30 days. Same entry shape as GET /leaderboard/pan-india. No authentication required.
+      operationId: getPanIndiaLeaderboardMonthly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Pan-India monthly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '500':
+          description: Internal server error
+
+  /leaderboard/state:
+    get:
+      summary: Get state leaderboard
+      description: Get leaderboard for a specific state. Same entry shape (name, rank, xp, profile_image, id, state, college). No authentication required.
+      operationId: getStateLeaderboard
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: state_id
+          in: query
+          required: true
+          description: State ID (UUID)
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, weekly, monthly]
+            default: all
+      responses:
+        '200':
+          description: State leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: Bad request – state_id required
+        '500':
+          description: Internal server error
+
+  /leaderboard/state/weekly:
+    get:
+      summary: Get state leaderboard (weekly)
+      description: State leaderboard for XP earned in the last 7 days. Requires state_id. No authentication required.
+      operationId: getStateLeaderboardWeekly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: state_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: State weekly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: state_id required
+        '500':
+          description: Internal server error
+
+  /leaderboard/state/monthly:
+    get:
+      summary: Get state leaderboard (monthly)
+      description: State leaderboard for XP earned in the last 30 days. Requires state_id. No authentication required.
+      operationId: getStateLeaderboardMonthly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: state_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: State monthly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: state_id required
+        '500':
+          description: Internal server error
+
+  /leaderboard/college:
+    get:
+      summary: Get college leaderboard
+      description: Get leaderboard for a specific college. Same entry shape (name, rank, xp, profile_image, id, state, college). No authentication required.
+      operationId: getCollegeLeaderboard
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: college_id
+          in: query
+          required: true
+          description: College ID (UUID)
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, weekly, monthly]
+            default: all
+      responses:
+        '200':
+          description: College leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: Bad request – college_id required
+        '500':
+          description: Internal server error
+
+  /leaderboard/college/weekly:
+    get:
+      summary: Get college leaderboard (weekly)
+      description: College leaderboard for XP earned in the last 7 days. Requires college_id. No authentication required.
+      operationId: getCollegeLeaderboardWeekly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: college_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: College weekly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: college_id required
+        '500':
+          description: Internal server error
+
+  /leaderboard/college/monthly:
+    get:
+      summary: Get college leaderboard (monthly)
+      description: College leaderboard for XP earned in the last 30 days. Requires college_id. No authentication required.
+      operationId: getCollegeLeaderboardMonthly
+      tags:
+        - leaderboard
+      security: []
+      parameters:
+        - name: college_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: College monthly leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          description: college_id required
+        '500':
+          description: Internal server error
+
+  /states:
+    get:
+      summary: Get all states
+      description: Retrieve a list of all states. No authentication required.
+      operationId: getStates
+      tags:
+        - states
+      security: []
+      responses:
+        '200':
+          description: List of states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/State'
+              example:
+                - id: "state-uuid-1"
+                  name: "Maharashtra"
+                  code: "MH"
+                - id: "state-uuid-2"
+                  name: "Karnataka"
+                  code: "KA"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to fetch states"
+
+  /states/{stateId}/colleges:
+    get:
+      summary: Get colleges by state
+      description: Retrieve all colleges for a specific state. No authentication required.
+      operationId: getCollegesByState
+      tags:
+        - colleges
+      security: []
+      parameters:
+        - name: stateId
+          in: path
+          required: true
+          description: State ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of colleges in the state
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/College'
+              example:
+                - id: "college-uuid-1"
+                  name: "Example Engineering College"
+                  state_id: "state-uuid-1"
+                  city: "Mumbai"
+                - id: "college-uuid-2"
+                  name: "Another College"
+                  state_id: "state-uuid-1"
+                  city: "Pune"
+        '400':
+          description: Bad request - State ID required
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "State ID is required"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to fetch colleges"
 
 components:
   securitySchemes:
@@ -493,6 +1476,96 @@ components:
       description: JWT token obtained from /auth/login
 
   schemas:
+    RefreshTokenRequest:
+      type: object
+      description: Old JWT to exchange for a new one (optional if sent in Authorization header)
+      properties:
+        token:
+          type: string
+          description: The old JWT token (valid or expired)
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token for Authorization header (Bearer &lt;token&gt;)
+        user:
+          $ref: '#/components/schemas/User'
+
+    RegisterResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token for Authorization header (Bearer &lt;token&gt;)
+        user:
+          $ref: '#/components/schemas/User'
+
+    LeaderboardResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+        type:
+          type: string
+          enum: [pan-india, state, college]
+        scope_id:
+          type: string
+          description: state_id or college_id (empty for pan-india)
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          description: Optional total count
+
+    LeaderboardEntry:
+      type: object
+      description: One leaderboard row – name, rank, xp, profile image, id, state, college
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User ID
+        name:
+          type: string
+        rank:
+          type: integer
+        xp:
+          type: integer
+        profile_image:
+          type: string
+          description: Profile/avatar URL (optional)
+        level:
+          type: integer
+        state_id:
+          type: string
+          format: uuid
+        state_name:
+          type: string
+        college_id:
+          type: string
+          format: uuid
+        college_name:
+          type: string
+
     User:
       type: object
       properties:
@@ -629,8 +1702,72 @@ components:
           type: string
           format: date-time
 
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        xp:
+          type: integer
+        type:
+          type: string
+          description: Task type (e.g. one_time, recurring)
+        proof_type:
+          type: string
+          description: Required proof type (e.g. image, video)
+        priority:
+          type: string
+          description: Task priority (e.g. normal, high)
+        start_at:
+          type: string
+          format: date-time
+          nullable: true
+        end_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_flash:
+          type: boolean
+        is_weekly:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [ongoing, ended, completed]
+          description: "ongoing = submission open (includes when user's submission was rejected, so they can resubmit); ended = time passed for submission (past end_at); completed = e.g. admin closed"
+
+    TaskWithUserStatus:
+      type: object
+      description: Task plus user-specific completion status. Use user_status to show completed vs ongoing from GET /tasks.
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            user_status:
+              type: string
+              enum: [completed, viewing, rejected, not_started]
+              description: |
+                completed = user has approved submission;
+                viewing = submitted, under review (DB pending);
+                rejected = submission rejected, may resubmit if task not ended;
+                not_started = user has not submitted.
+            submission_id:
+              type: string
+              description: Set when user has a submission (approved, viewing, or rejected); empty when not_started.
+
     Submission:
       type: object
+      description: Task submission. When status is `pending`, the task shows as **user_status** `viewing` in GET /tasks.
       properties:
         id:
           type: string
@@ -650,15 +1787,40 @@ components:
             - pending
             - approved
             - rejected
+          description: "pending = under review (viewing); approved = done; rejected = may resubmit if task not ended."
         admin_comment:
           type: string
-          description: Admin comment (e.g. rejection reason)
+          description: Admin comment (e.g. rejection reason); set on approve/reject.
         reviewed_by:
           type: string
           format: uuid
+          description: Admin user ID who reviewed the submission.
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    State:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        code:
+          type: string
+
+    College:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        state_id:
+          type: string
+        city:
+          type: string
+          description: City (optional)

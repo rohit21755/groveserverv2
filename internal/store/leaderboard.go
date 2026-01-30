@@ -10,12 +10,14 @@ import (
 
 type LeaderboardEntry struct {
 	Rank        int    `json:"rank"`
-	UserID      string `json:"user_id"`
-	UserName    string `json:"user_name"`
-	UserAvatar  string `json:"user_avatar,omitempty"`
+	UserID      string `json:"id"`
+	UserName    string `json:"name"`
+	UserAvatar  string `json:"profile_image,omitempty"`
 	XP          int    `json:"xp"`
 	Level       int    `json:"level"`
+	StateID     string `json:"state_id,omitempty"`
 	StateName   string `json:"state_name,omitempty"`
+	CollegeID   string `json:"college_id,omitempty"`
 	CollegeName string `json:"college_name,omitempty"`
 }
 
@@ -50,34 +52,33 @@ func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, of
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level
+				u.id, u.name, u.avatar_url,
+				COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
+			LEFT JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '7 days'
 			WHERE u.role = 'student'
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $1 OFFSET $2
 		`
 	case "monthly":
-		// Get XP earned in the last 30 days from xp_logs
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level
+				u.id, u.name, u.avatar_url,
+				COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
+			LEFT JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '30 days'
 			WHERE u.role = 'student'
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $1 OFFSET $2
 		`
@@ -85,12 +86,11 @@ func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, of
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				u.xp,
-				u.level
+				u.id, u.name, u.avatar_url, u.xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
+			LEFT JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			WHERE u.role = 'student'
 			ORDER BY u.xp DESC, u.created_at ASC
 			LIMIT $1 OFFSET $2
@@ -106,20 +106,25 @@ func (s *LeaderboardStore) GetPanIndiaLeaderboard(ctx context.Context, limit, of
 	var entries []LeaderboardEntry
 	for rows.Next() {
 		var entry LeaderboardEntry
-		var userAvatar sql.NullString
+		var userAvatar, stateName, collegeName sql.NullString
 
 		err := rows.Scan(
-			&entry.Rank, &entry.UserID, &entry.UserName,
-			&userAvatar, &entry.XP, &entry.Level,
+			&entry.Rank, &entry.UserID, &entry.UserName, &userAvatar,
+			&entry.XP, &entry.Level,
+			&entry.StateID, &stateName, &entry.CollegeID, &collegeName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan leaderboard entry: %w", err)
 		}
-
 		if userAvatar.Valid {
 			entry.UserAvatar = userAvatar.String
 		}
-
+		if stateName.Valid {
+			entry.StateName = stateName.String
+		}
+		if collegeName.Valid {
+			entry.CollegeName = collegeName.String
+		}
 		entries = append(entries, entry)
 	}
 
@@ -150,18 +155,15 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level,
-				s.name as state_name
+				u.id, u.name, u.avatar_url, COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '7 days'
 			WHERE u.role = 'student' AND u.state_id = $1
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, s.name
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
 		`
@@ -169,18 +171,15 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level,
-				s.name as state_name
+				u.id, u.name, u.avatar_url, COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '30 days'
 			WHERE u.role = 'student' AND u.state_id = $1
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, s.name
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
 		`
@@ -188,14 +187,11 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				u.xp,
-				u.level,
-				s.name as state_name
+				u.id, u.name, u.avatar_url, u.xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN states s ON u.state_id = s.id
+			LEFT JOIN colleges c ON u.college_id = c.id
 			WHERE u.role = 'student' AND u.state_id = $1
 			ORDER BY u.xp DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
@@ -211,24 +207,25 @@ func (s *LeaderboardStore) GetStateLeaderboard(ctx context.Context, stateID stri
 	var entries []LeaderboardEntry
 	for rows.Next() {
 		var entry LeaderboardEntry
-		var userAvatar sql.NullString
-		var stateName sql.NullString
+		var userAvatar, stateName, collegeName sql.NullString
 
 		err := rows.Scan(
-			&entry.Rank, &entry.UserID, &entry.UserName,
-			&userAvatar, &entry.XP, &entry.Level, &stateName,
+			&entry.Rank, &entry.UserID, &entry.UserName, &userAvatar,
+			&entry.XP, &entry.Level,
+			&entry.StateID, &stateName, &entry.CollegeID, &collegeName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan leaderboard entry: %w", err)
 		}
-
 		if userAvatar.Valid {
 			entry.UserAvatar = userAvatar.String
 		}
 		if stateName.Valid {
 			entry.StateName = stateName.String
 		}
-
+		if collegeName.Valid {
+			entry.CollegeName = collegeName.String
+		}
 		entries = append(entries, entry)
 	}
 
@@ -259,18 +256,15 @@ func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID 
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level,
-				c.name as college_name
+				u.id, u.name, u.avatar_url, COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN colleges c ON u.college_id = c.id
+			LEFT JOIN states s ON u.state_id = s.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '7 days'
 			WHERE u.role = 'student' AND u.college_id = $1
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, c.name
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
 		`
@@ -278,18 +272,15 @@ func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID 
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				COALESCE(SUM(xl.xp), 0) as xp,
-				u.level,
-				c.name as college_name
+				u.id, u.name, u.avatar_url, COALESCE(SUM(xl.xp), 0) as xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN colleges c ON u.college_id = c.id
+			LEFT JOIN states s ON u.state_id = s.id
 			LEFT JOIN xp_logs xl ON u.id = xl.user_id 
 				AND xl.created_at >= NOW() - INTERVAL '30 days'
 			WHERE u.role = 'student' AND u.college_id = $1
-			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, c.name
+			GROUP BY u.id, u.name, u.avatar_url, u.level, u.created_at, u.state_id, s.name, u.college_id, c.name
 			ORDER BY COALESCE(SUM(xl.xp), 0) DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
 		`
@@ -297,14 +288,11 @@ func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID 
 		query = `
 			SELECT 
 				ROW_NUMBER() OVER (ORDER BY u.xp DESC, u.created_at ASC) as rank,
-				u.id as user_id,
-				u.name as user_name,
-				u.avatar_url as user_avatar,
-				u.xp,
-				u.level,
-				c.name as college_name
+				u.id, u.name, u.avatar_url, u.xp, u.level,
+				u.state_id, s.name as state_name, u.college_id, c.name as college_name
 			FROM users u
 			INNER JOIN colleges c ON u.college_id = c.id
+			LEFT JOIN states s ON u.state_id = s.id
 			WHERE u.role = 'student' AND u.college_id = $1
 			ORDER BY u.xp DESC, u.created_at ASC
 			LIMIT $2 OFFSET $3
@@ -320,24 +308,25 @@ func (s *LeaderboardStore) GetCollegeLeaderboard(ctx context.Context, collegeID 
 	var entries []LeaderboardEntry
 	for rows.Next() {
 		var entry LeaderboardEntry
-		var userAvatar sql.NullString
-		var collegeName sql.NullString
+		var userAvatar, stateName, collegeName sql.NullString
 
 		err := rows.Scan(
-			&entry.Rank, &entry.UserID, &entry.UserName,
-			&userAvatar, &entry.XP, &entry.Level, &collegeName,
+			&entry.Rank, &entry.UserID, &entry.UserName, &userAvatar,
+			&entry.XP, &entry.Level,
+			&entry.StateID, &stateName, &entry.CollegeID, &collegeName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan leaderboard entry: %w", err)
 		}
-
 		if userAvatar.Valid {
 			entry.UserAvatar = userAvatar.String
+		}
+		if stateName.Valid {
+			entry.StateName = stateName.String
 		}
 		if collegeName.Valid {
 			entry.CollegeName = collegeName.String
 		}
-
 		entries = append(entries, entry)
 	}
 

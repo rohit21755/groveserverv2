@@ -64,6 +64,29 @@ func ValidateToken(tokenString, secret string) (*Claims, error) {
 	return claims, nil
 }
 
+// ParseTokenForRefresh parses the token and returns claims if the signature is valid.
+// It accepts expired tokens so that refresh can issue a new token.
+func ParseTokenForRefresh(tokenString, secret string) (*Claims, error) {
+	claims := &Claims{}
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	}, jwt.WithoutClaimsValidation())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token signature")
+	}
+
+	return claims, nil
+}
+
 // ParseExpiryDuration parses a duration string (e.g., "24h", "1h30m") into time.Duration
 func ParseExpiryDuration(expiry string) (time.Duration, error) {
 	duration, err := time.ParseDuration(expiry)

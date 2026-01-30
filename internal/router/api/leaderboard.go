@@ -13,12 +13,12 @@ import (
 
 // LeaderboardResponse represents the leaderboard response
 type LeaderboardResponse struct {
-	Entries   []store.LeaderboardEntry `json:"entries"`
-	Type      string                   `json:"type"`       // "pan-india", "state", "college"
-	ScopeID   string                   `json:"scope_id,omitempty"` // state_id or college_id
-	Page      int                      `json:"page"`
-	PageSize  int                      `json:"page_size"`
-	Total     int                      `json:"total,omitempty"` // Optional: total count
+	Entries  []store.LeaderboardEntry `json:"entries"`
+	Type     string                   `json:"type"`               // "pan-india", "state", "college"
+	ScopeID  string                   `json:"scope_id,omitempty"` // state_id or college_id
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int                      `json:"total,omitempty"` // Optional: total count
 }
 
 // handleGetPanIndiaLeaderboard handles getting the pan-India leaderboard
@@ -96,6 +96,48 @@ func handleGetPanIndiaLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// handleGetPanIndiaLeaderboardWithPeriod handles pan-India leaderboard with a fixed period (weekly or monthly).
+func handleGetPanIndiaLeaderboardWithPeriod(postgres *db.Postgres, period string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		page := 1
+		pageSize := 100
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+		leaderboardStore := store.NewLeaderboardStore(postgres)
+		entries, err := leaderboardStore.GetPanIndiaLeaderboard(ctx, pageSize, offset, period)
+		if err != nil {
+			log.Printf("Error getting pan-india %s leaderboard: %v", period, err)
+			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)
+			return
+		}
+		for i := range entries {
+			entries[i].Rank = offset + i + 1
+		}
+		response := LeaderboardResponse{
+			Entries:  entries,
+			Type:     "pan-india",
+			Page:     page,
+			PageSize: pageSize,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -187,6 +229,54 @@ func handleGetStateLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 	}
 }
 
+// handleGetStateLeaderboardWithPeriod handles state leaderboard with a fixed period (weekly or monthly).
+func handleGetStateLeaderboardWithPeriod(postgres *db.Postgres, period string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		stateID := r.URL.Query().Get("state_id")
+		if stateID == "" {
+			http.Error(w, "state_id query parameter is required", http.StatusBadRequest)
+			return
+		}
+		page := 1
+		pageSize := 100
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+		leaderboardStore := store.NewLeaderboardStore(postgres)
+		entries, err := leaderboardStore.GetStateLeaderboard(ctx, stateID, pageSize, offset, period)
+		if err != nil {
+			log.Printf("Error getting state %s leaderboard: %v", period, err)
+			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)
+			return
+		}
+		for i := range entries {
+			entries[i].Rank = offset + i + 1
+		}
+		response := LeaderboardResponse{
+			Entries:  entries,
+			Type:     "state",
+			ScopeID:  stateID,
+			Page:     page,
+			PageSize: pageSize,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(response)
+	}
+}
+
 // handleGetCollegeLeaderboard handles getting the college leaderboard
 // @Summary      Get college leaderboard
 // @Description  Get the college leaderboard with pagination. Shows top users by XP within a specific college.
@@ -272,5 +362,53 @@ func handleGetCollegeLeaderboard(postgres *db.Postgres) http.HandlerFunc {
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// handleGetCollegeLeaderboardWithPeriod handles college leaderboard with a fixed period (weekly or monthly).
+func handleGetCollegeLeaderboardWithPeriod(postgres *db.Postgres, period string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		collegeID := r.URL.Query().Get("college_id")
+		if collegeID == "" {
+			http.Error(w, "college_id query parameter is required", http.StatusBadRequest)
+			return
+		}
+		page := 1
+		pageSize := 100
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+		leaderboardStore := store.NewLeaderboardStore(postgres)
+		entries, err := leaderboardStore.GetCollegeLeaderboard(ctx, collegeID, pageSize, offset, period)
+		if err != nil {
+			log.Printf("Error getting college %s leaderboard: %v", period, err)
+			http.Error(w, fmt.Sprintf("Failed to get leaderboard: %v", err), http.StatusInternalServerError)
+			return
+		}
+		for i := range entries {
+			entries[i].Rank = offset + i + 1
+		}
+		response := LeaderboardResponse{
+			Entries:  entries,
+			Type:     "college",
+			ScopeID:  collegeID,
+			Page:     page,
+			PageSize: pageSize,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(response)
 	}
 }

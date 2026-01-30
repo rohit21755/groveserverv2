@@ -30,14 +30,14 @@ const (
 	NotificationTypeTaskRejected NotificationType = "task_rejected"
 	NotificationTypeNewFollower  NotificationType = "new_follower"
 	NotificationTypeNewComment   NotificationType = "new_comment"
-	NotificationTypeNewReaction   NotificationType = "new_reaction"
+	NotificationTypeNewReaction  NotificationType = "new_reaction"
 )
 
 // WSMessage represents a WebSocket message
 type WSMessage struct {
-	Type    MessageType       `json:"type"`
-	Payload json.RawMessage   `json:"payload"`
-	Data    interface{}       `json:"data,omitempty"` // For backward compatibility
+	Type    MessageType     `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+	Data    interface{}     `json:"data,omitempty"` // For backward compatibility
 }
 
 // NotificationPayload represents a notification message
@@ -52,7 +52,7 @@ type NotificationPayload struct {
 
 // Client represents a WebSocket client connection
 type Client struct {
-	ID       string          // User ID
+	ID       string // User ID
 	Conn     *websocket.Conn
 	Send     chan []byte
 	Hub      *Hub
@@ -124,52 +124,60 @@ func (h *Hub) Run() {
 			log.Printf("WebSocket client disconnected: user_id=%s", client.UserID)
 
 		case message := <-h.broadcast:
-			// Broadcast to all connected clients
+			// Broadcast to all connected clients; collect slow/full clients to remove after loop
 			h.mu.RLock()
+			var toRemove []*Client
 			for _, client := range h.clients {
 				select {
 				case client.Send <- message:
 				default:
-					close(client.Send)
-					delete(h.clients, client.UserID)
+					toRemove = append(toRemove, client)
 				}
 			}
 			h.mu.RUnlock()
+			// Remove and close outside RLock (map write + close must not happen under RLock)
+			if len(toRemove) > 0 {
+				h.mu.Lock()
+				for _, client := range toRemove {
+					if _, ok := h.clients[client.UserID]; ok {
+						delete(h.clients, client.UserID)
+						close(client.Send)
+					}
+				}
+				h.mu.Unlock()
+			}
 		}
 	}
 }
 
-// SendNotification sends a notification to a specific user
+// SendNotification sends a notification to a specific user.
+// Hold lock during send so we never send on a closed channel.
 func (h *Hub) SendNotification(userID string, notification NotificationPayload) error {
-	h.mu.RLock()
-	client, exists := h.clients[userID]
-	h.mu.RUnlock()
-
-	if !exists {
-		// User not connected, store notification in database for later retrieval
-		// TODO: Store notification in database
-		log.Printf("User %s not connected, notification will be stored in database", userID)
-		return nil
-	}
-
-	// Create message
 	message := WSMessage{
 		Type: MessageTypeNotification,
 		Data: notification,
 	}
-
 	messageBytes, err := json.Marshal(message)
 	if err != nil {
 		return err
 	}
 
+	h.mu.Lock()
+	client, exists := h.clients[userID]
+	if !exists {
+		h.mu.Unlock()
+		// User not connected, store notification in database for later retrieval
+		// TODO: Store notification in database
+		log.Printf("User %s not connected, notification will be stored in database", userID)
+		return nil
+	}
 	select {
 	case client.Send <- messageBytes:
 		log.Printf("Notification sent to user %s: %s", userID, notification.Type)
 	default:
 		log.Printf("Failed to send notification to user %s: channel full", userID)
 	}
-
+	h.mu.Unlock()
 	return nil
 }
 
@@ -198,6 +206,10 @@ func (h *Hub) BroadcastMessage(messageType MessageType, data interface{}) error 
 
 // subscribeToNotifications subscribes to Redis pub/sub for notifications
 func (h *Hub) subscribeToNotifications() {
+	if h.redisClient == nil || h.redisClient.Client == nil {
+		log.Printf("[WS] Redis not configured, skipping notification subscription")
+		return
+	}
 	ctx := context.Background()
 	pubsub := h.redisClient.Client.Subscribe(ctx, "notifications")
 

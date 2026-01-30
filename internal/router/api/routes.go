@@ -13,6 +13,7 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", handleLogin(postgres, cfg))
 		r.Post("/register", handleRegister(postgres, cfg))
+		r.Post("/refresh", handleRefresh(postgres, cfg))
 	})
 
 	// User routes (protected with JWT)
@@ -32,7 +33,8 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 		r.Get("/badges", handleGetMyBadges(postgres))
 		// Task history
 		r.Get("/tasks/history", handleGetMyTaskHistory(postgres))
-		// Streak routes
+		// Streak routes (daily check-in counts toward streak)
+		r.Post("/streak/check-in", handleStreakCheckIn(postgres))
 		r.Post("/streak/redeem", handleRedeemStreak(postgres))
 	})
 
@@ -57,8 +59,17 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 
 	// Leaderboard routes
 	r.Route("/leaderboard", func(r chi.Router) {
+		// Pan-India: weekly and monthly first (more specific)
+		r.Get("/pan-india/weekly", handleGetPanIndiaLeaderboardWithPeriod(postgres, "weekly"))
+		r.Get("/pan-india/monthly", handleGetPanIndiaLeaderboardWithPeriod(postgres, "monthly"))
 		r.Get("/pan-india", handleGetPanIndiaLeaderboard(postgres))
+		// State
+		r.Get("/state/weekly", handleGetStateLeaderboardWithPeriod(postgres, "weekly"))
+		r.Get("/state/monthly", handleGetStateLeaderboardWithPeriod(postgres, "monthly"))
 		r.Get("/state", handleGetStateLeaderboard(postgres))
+		// College
+		r.Get("/college/weekly", handleGetCollegeLeaderboardWithPeriod(postgres, "weekly"))
+		r.Get("/college/monthly", handleGetCollegeLeaderboardWithPeriod(postgres, "monthly"))
 		r.Get("/college", handleGetCollegeLeaderboard(postgres))
 	})
 
@@ -121,7 +132,7 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 		r.Route("/submissions", func(r chi.Router) {
 			r.Get("/", handleGetSubmissions(postgres))
 			r.Post("/{id}/approve", handleApproveSubmission(postgres, redisClient))
-			r.Post("/{id}/reject", handleRejectSubmission(postgres))
+			r.Post("/{id}/reject", handleRejectSubmission(postgres, cfg))
 		})
 	})
 }

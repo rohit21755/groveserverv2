@@ -1,0 +1,292 @@
+openapi: 3.0.3
+info:
+  title: WebSocket API
+  description: |
+    WebSocket documentation for real-time features:
+    - **Connect** – Authenticated WebSocket for notifications, chat, and task updates (JWT required).
+    - **Leaderboard** – Live leaderboard updates by pan-india, state, or college (no auth).
+  version: 1.0.0
+
+servers:
+  - url: ws://localhost:8080/ws
+    description: WebSocket base path (use wss:// in production)
+  - url: ws://ec2-3-85-45-121.compute-1.amazonaws.com:8080/ws
+    description: Example production WebSocket base
+
+# WebSocket endpoints are HTTP GET that upgrade to WebSocket
+paths:
+  /connect:
+    get:
+      summary: WebSocket connect (authenticated)
+      description: |
+        Open a WebSocket connection for the authenticated user. Use for real-time notifications,
+        chat, and task updates. Requires JWT via query parameter or Authorization header.
+        After upgrade, the server may send messages at any time (notification, chat, leaderboard, task, system).
+      operationId: wsConnect
+      tags:
+        - websocket
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: JWT token (alternative to Authorization header). Can include "Bearer " prefix.
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        '101':
+          description: Switching Protocols – connection upgraded to WebSocket
+        '401':
+          description: Unauthorized – missing or invalid token
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                missing:
+                  value: "Token required"
+                invalid:
+                  value: "Invalid or expired token"
+
+  /leaderboard:
+    get:
+      summary: WebSocket leaderboard
+      description: |
+        Open a WebSocket connection for live leaderboard updates. No authentication.
+        On connect, server sends initial leaderboard_data (entries with name, rank, xp, profile_image, id, state, college).
+        Then server pushes leaderboard_update with user_id, rank, and xp when a user's rank or XP changes (e.g. task approval).
+      operationId: wsLeaderboard
+      tags:
+        - websocket
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Leaderboard scope – pan-india, state, or college
+          schema:
+            type: string
+            enum: [pan-india, state, college]
+            default: pan-india
+        - name: scope_id
+          in: query
+          required: false
+          description: Required when type is state or college – state_id or college_id (UUID)
+          schema:
+            type: string
+            format: uuid
+        - name: period
+          in: query
+          required: false
+          description: Time period for rankings – all (lifetime XP), weekly (last 7 days), monthly (last 30 days)
+          schema:
+            type: string
+            enum: [all, weekly, monthly]
+            default: all
+      responses:
+        '101':
+          description: Switching Protocols – connection upgraded to WebSocket
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT from /api/auth/login. Pass in query (?token=JWT) or header (Authorization Bearer JWT).
+
+  schemas:
+    # ----- Server → Client message envelope -----
+    WSMessage:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [notification, chat, leaderboard, task, system]
+          description: Message type
+        payload:
+          type: object
+          description: Raw payload (structure depends on type)
+        data:
+          type: object
+          description: Alias for payload (backward compatibility)
+
+    # ----- Notification (type = notification) -----
+    NotificationPayload:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+            - task_assigned
+            - task_approved
+            - task_rejected
+            - new_follower
+            - new_comment
+            - new_reaction
+        title:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+          description: Extra data (task_id, user_id, xp_awarded, etc.)
+        created_at:
+          type: string
+          format: date-time
+
+    # ----- Leaderboard initial data (type = leaderboard_data, /ws/leaderboard only) -----
+    LeaderboardDataMessage:
+      type: object
+      properties:
+        type:
+          type: string
+          example: leaderboard_data
+        scope:
+          type: string
+          enum: [pan-india, state, college]
+        scope_id:
+          type: string
+          description: state_id or college_id (empty for pan-india)
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+
+    LeaderboardEntry:
+      type: object
+      description: One leaderboard row – name, rank, xp, profile image, id, state, college
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User ID
+        name:
+          type: string
+        rank:
+          type: integer
+        xp:
+          type: integer
+        profile_image:
+          type: string
+          description: Profile/avatar URL (optional)
+        level:
+          type: integer
+        state_id:
+          type: string
+          format: uuid
+        state_name:
+          type: string
+        college_id:
+          type: string
+          format: uuid
+        college_name:
+          type: string
+
+    # ----- Leaderboard update (server push) – rank and xp change for a user -----
+    LeaderboardUpdateMessage:
+      type: object
+      properties:
+        type:
+          type: string
+          example: leaderboard_update
+        scope:
+          type: string
+          enum: [pan-india, state, college]
+        scope_id:
+          type: string
+          description: state_id or college_id (empty for pan-india)
+        user_id:
+          type: string
+          format: uuid
+          description: User whose rank/XP changed
+        rank:
+          type: integer
+          description: New pan-India rank
+        xp:
+          type: integer
+          description: New XP total
+        timestamp:
+          type: integer
+          description: Unix timestamp
+
+# ----- Message examples -----
+x-ws-messages:
+  serverToClient:
+    - description: Notification – task approved
+      message:
+        type: notification
+        data:
+          id: "550e8400-e29b-41d4-a716-446655440000"
+          type: task_approved
+          title: "Task Approved"
+          message: "Your task 'Complete profile' has been approved! You earned 25 XP."
+          data:
+            task_id: "660e8400-e29b-41d4-a716-446655440001"
+            task_title: "Complete profile"
+            xp_awarded: 25
+          created_at: "2025-01-20T14:00:00Z"
+
+    - description: Notification – task assigned
+      message:
+        type: notification
+        data:
+          type: task_assigned
+          title: "New Task Assigned"
+          message: "You have been assigned a new task: Share on LinkedIn"
+          data:
+            task_id: "770e8400-e29b-41d4-a716-446655440002"
+            task_title: "Share on LinkedIn"
+
+    - description: Leaderboard initial data (/ws/leaderboard)
+      message:
+        type: leaderboard_data
+        scope: pan-india
+        scope_id: ""
+        entries:
+          - id: "user-uuid-1"
+            name: "Alice"
+            rank: 1
+            xp: 1500
+            profile_image: "https://bucket.s3.amazonaws.com/profile/alice.jpg"
+            state_id: "state-uuid-1"
+            state_name: "Maharashtra"
+            college_id: "college-uuid-1"
+            college_name: "Example College"
+          - id: "user-uuid-2"
+            name: "Bob"
+            rank: 2
+            xp: 1200
+            profile_image: ""
+            state_id: "state-uuid-2"
+            state_name: "Karnataka"
+            college_id: "college-uuid-2"
+            college_name: "Another College"
+
+    - description: Leaderboard update (server push) – user rank/XP changed
+      message:
+        type: leaderboard_update
+        scope: pan-india
+        scope_id: ""
+        user_id: "user-uuid-1"
+        rank: 3
+        xp: 1525
+        timestamp: 1737382800
+
+  clientToServer:
+    - description: Optional client messages (e.g. chat) – type and payload
+      message:
+        type: chat
+        payload: {}
+      note: "Incoming client messages are logged; handling is extensible."
+
+# ----- Connection details -----
+x-connection:
+  pingPong: "Server sends Ping; client should respond with Pong. pongWait 60s, pingPeriod 54s."
+  readLimit: "512KB max message size."
+  writeWait: "10s write deadline."
+  protocols: "Text frames (JSON)."

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rohit21755/groveserverv2/internal/auth"
@@ -23,8 +24,8 @@ type LoginRequest struct {
 
 // LoginResponse represents the login response
 type LoginResponse struct {
-	Token string       `json:"token"`
-	User  *store.User  `json:"user"`
+	Token string      `json:"token"`
+	User  *store.User `json:"user"`
 }
 
 // handleLogin handles user login
@@ -116,8 +117,8 @@ func handleLogin(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 
 // RegisterResponse represents the registration response
 type RegisterResponse struct {
-	Token string       `json:"token"`
-	User  *store.User  `json:"user"`
+	Token string      `json:"token"`
+	User  *store.User `json:"user"`
 }
 
 // handleRegister handles user registration
@@ -144,13 +145,13 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 
 		// Initialize S3 storage
 		s3Storage, err := storage.NewS3Storage(storage.S3Config{
-			Region:              cfg.AWSRegion,
-			ProfileBucket:       cfg.AWSProfileBucket,
-			ResumeBucket:        cfg.AWSResumeBucket,
-			AccessKeyID:         cfg.AWSAccessKeyID,
-			SecretAccessKey:     cfg.AWSSecretAccessKey,
-			ProfilePublicURL:    cfg.AWSProfilePublicURL,
-			ResumePublicURL:     cfg.AWSResumePublicURL,
+			Region:           cfg.AWSRegion,
+			ProfileBucket:    cfg.AWSProfileBucket,
+			ResumeBucket:     cfg.AWSResumeBucket,
+			AccessKeyID:      cfg.AWSAccessKeyID,
+			SecretAccessKey:  cfg.AWSSecretAccessKey,
+			ProfilePublicURL: cfg.AWSProfilePublicURL,
+			ResumePublicURL:  cfg.AWSResumePublicURL,
 		})
 		if err != nil {
 			log.Printf("Error initializing S3 storage: %v", err)
@@ -184,10 +185,10 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		resumeFile, resumeHeader, err := r.FormFile("resume")
 		if err == nil && resumeFile != nil {
 			defer resumeFile.Close()
-			
+
 			// Use email as temporary identifier (will be updated after user creation if needed)
 			tempUserID := email
-			
+
 			resumeURL, err = s3Storage.UploadResume(ctx, resumeFile, tempUserID, resumeHeader.Filename)
 			if err != nil {
 				log.Printf("Error uploading resume: %v", err)
@@ -201,9 +202,9 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		profilePicFile, profilePicHeader, err := r.FormFile("profile_pic")
 		if err == nil && profilePicFile != nil {
 			defer profilePicFile.Close()
-			
+
 			tempUserID := email
-			
+
 			profilePicURL, err = s3Storage.UploadProfilePic(ctx, profilePicFile, tempUserID, profilePicHeader.Filename)
 			if err != nil {
 				log.Printf("Error uploading profile picture: %v", err)
@@ -228,7 +229,7 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		user, err := userStore.Register(ctx, registerReq, resumeURL, profilePicURL)
 		if err != nil {
 			log.Printf("Error registering user: %v", err)
-			
+
 			// If user creation failed, try to clean up uploaded files
 			if resumeURL != "" {
 				// Extract key from URL and delete
@@ -239,7 +240,7 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 				key := extractS3KeyFromURL(profilePicURL)
 				_ = s3Storage.DeleteProfilePic(ctx, key)
 			}
-			
+
 			http.Error(w, fmt.Sprintf("Failed to register user: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -272,6 +273,97 @@ func handleRegister(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Printf("Error encoding response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// RefreshTokenRequest represents the refresh token request body
+type RefreshTokenRequest struct {
+	Token string `json:"token"`
+}
+
+// handleRefresh validates the old token (even if expired), then issues a new JWT and returns user.
+// Token can be sent in the request body as {"token": "..."} or in Authorization: Bearer <token>.
+// @Summary      Refresh token
+// @Description  Exchange an old JWT (valid or expired) for a new one. Validates signature of the old token; if valid, returns a new token and user.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      RefreshTokenRequest  true  "Old token (optional if sent in Authorization header)"
+// @Success      200   {object}  LoginResponse         "New token and user"
+// @Failure      400   {string}  string  "Bad request - token required"
+// @Failure      401   {string}  string  "Invalid or expired token"
+// @Failure      500   {string}  string  "Internal server error"
+// @Router       /api/auth/refresh [post]
+func handleRefresh(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var tokenString string
+
+		// Prefer token from body
+		var refreshReq RefreshTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&refreshReq); err == nil && refreshReq.Token != "" {
+			tokenString = refreshReq.Token
+		}
+
+		// Fallback to Authorization header
+		if tokenString == "" {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				parts := strings.Split(authHeader, " ")
+				if len(parts) == 2 && parts[0] == "Bearer" {
+					tokenString = parts[1]
+				}
+			}
+		}
+
+		if tokenString == "" {
+			http.Error(w, "Token required (body.token or Authorization: Bearer <token>)", http.StatusBadRequest)
+			return
+		}
+
+		// Parse old token (accepts expired; validates signature only)
+		claims, err := auth.ParseTokenForRefresh(tokenString, cfg.JWTSecret)
+		if err != nil {
+			log.Printf("Refresh token parse error: %v", err)
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Optionally ensure user still exists
+		userStore := store.NewUserStore(postgres)
+		user, err := userStore.GetUserByID(ctx, claims.UserID)
+		if err != nil {
+			log.Printf("Refresh: user not found: %v", err)
+			http.Error(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		expiryDuration, err := auth.ParseExpiryDuration(cfg.JWTExpiry)
+		if err != nil {
+			log.Printf("Error parsing JWT expiry, using default 24h: %v", err)
+			expiryDuration = 24 * time.Hour
+		}
+
+		newToken, err := auth.GenerateToken(user.ID, user.Email, user.Role, cfg.JWTSecret, expiryDuration)
+		if err != nil {
+			log.Printf("Error generating refresh token: %v", err)
+			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			return
+		}
+
+		response := LoginResponse{
+			Token: newToken,
+			User:  user,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding refresh response: %v", err)
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}

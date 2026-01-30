@@ -10,6 +10,13 @@ import (
 	"github.com/rohit21755/groveserverv2/internal/db"
 )
 
+// TaskStatus represents the task lifecycle: ongoing (open), ended (past deadline), completed (e.g. admin closed)
+const (
+	TaskStatusOngoing   = "ongoing"
+	TaskStatusEnded     = "ended"
+	TaskStatusCompleted = "completed"
+)
+
 type Task struct {
 	ID          string     `json:"id"`
 	Title       string     `json:"title"`
@@ -24,6 +31,22 @@ type Task struct {
 	IsWeekly    bool       `json:"is_weekly"`
 	CreatedBy   string     `json:"created_by"`
 	CreatedAt   time.Time  `json:"created_at"`
+	Status      string     `json:"status"` // ongoing, ended, or completed (time passed for submission = ended)
+}
+
+// UserTaskStatus is the status of a task for a specific user (completion state).
+const (
+	UserTaskStatusCompleted  = "completed"   // user has approved submission
+	UserTaskStatusViewing    = "viewing"     // submitted, under review (DB: pending)
+	UserTaskStatusRejected   = "rejected"    // submission rejected, may resubmit if task not ended
+	UserTaskStatusNotStarted = "not_started" // user has not submitted
+)
+
+// TaskWithUserStatus extends Task with the current user's completion status for one-route completed/ongoing display.
+type TaskWithUserStatus struct {
+	Task
+	UserStatus   string `json:"user_status"`             // completed, viewing, rejected, not_started
+	SubmissionID string `json:"submission_id,omitempty"` // set when user has a submission
 }
 
 type TaskStore struct {
@@ -57,8 +80,8 @@ type AssignmentType string
 const (
 	AssignmentAll     AssignmentType = "all"     // All users
 	AssignmentState   AssignmentType = "state"   // Users from a specific state
-	AssignmentCollege AssignmentType = "college"  // Users from a specific college
-	AssignmentUser    AssignmentType = "user"   // Single user
+	AssignmentCollege AssignmentType = "college" // Users from a specific college
+	AssignmentUser    AssignmentType = "user"    // Single user
 )
 
 // CreateTask creates a new task and assigns it to users based on assignment type
@@ -70,12 +93,12 @@ func (s *TaskStore) CreateTask(ctx context.Context, req CreateTaskRequest, assig
 	}
 	defer tx.Rollback()
 
-	// Create task
+	// Create task (status = ongoing when created)
 	taskID := uuid.New().String()
 	query := `
-		INSERT INTO tasks (id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, created_at
+		INSERT INTO tasks (id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ongoing')
+		RETURNING id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, created_at, status
 	`
 
 	var task Task
@@ -86,7 +109,7 @@ func (s *TaskStore) CreateTask(ctx context.Context, req CreateTaskRequest, assig
 		req.StartAt, req.EndAt, req.IsFlash, req.IsWeekly, req.CreatedBy,
 	).Scan(
 		&task.ID, &task.Title, &task.Description, &task.XP, &task.Type, &task.ProofType, &task.Priority,
-		&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt,
+		&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt, &task.Status,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create task: %w", err)
@@ -165,10 +188,11 @@ func (s *TaskStore) getUserIDsForAssignment(ctx context.Context, tx *sql.Tx, ass
 	return userIDs, nil
 }
 
-// GetTaskByID retrieves a task by ID
+// GetTaskByID retrieves a task by ID. Status is derived: ended when end_at has passed, else ongoing/completed from DB.
 func (s *TaskStore) GetTaskByID(ctx context.Context, taskID string) (*Task, error) {
 	query := `
-		SELECT id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, created_at
+		SELECT id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, created_at,
+			CASE WHEN end_at IS NOT NULL AND end_at < NOW() THEN 'ended' ELSE COALESCE(status, 'ongoing') END AS status
 		FROM tasks WHERE id = $1
 	`
 
@@ -177,7 +201,7 @@ func (s *TaskStore) GetTaskByID(ctx context.Context, taskID string) (*Task, erro
 
 	err := s.postgres.DB.QueryRowContext(ctx, query, taskID).Scan(
 		&task.ID, &task.Title, &task.Description, &task.XP, &task.Type, &task.ProofType, &task.Priority,
-		&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt,
+		&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt, &task.Status,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -196,8 +220,9 @@ func (s *TaskStore) GetTaskByID(ctx context.Context, taskID string) (*Task, erro
 	return &task, nil
 }
 
-// GetTasksForUser retrieves all tasks assigned to a user
-// Tasks are assigned based on: all users, user's state, user's college, or specific user assignment
+// GetTasksForUser retrieves all tasks assigned to a user.
+// Tasks are assigned based on: all users, user's state, user's college, or specific user.
+// Status: if user has a rejected submission for a task and task is not ended, status is ongoing (can resubmit).
 func (s *TaskStore) GetTasksForUser(ctx context.Context, userID string) ([]Task, error) {
 	// First, get user's state_id and college_id
 	var stateID, collegeID sql.NullString
@@ -215,21 +240,25 @@ func (s *TaskStore) GetTasksForUser(ctx context.Context, userID string) ([]Task,
 	// 2. User's state (if state_id matches)
 	// 3. User's college (if college_id matches)
 	// 4. Specific user (if user_id matches)
-	
-	// For now, we'll get all active tasks and filter in application logic
-	// In a production system, you might want a task_assignments table
-	// For simplicity, we'll return all tasks that are:
-	// - Not expired (end_at is null or in the future)
-	// - Started (start_at is null or in the past)
+
+	// Return all tasks that have started (start_at in the past or null), including ongoing and ended.
+	// status: rejected submission for this user → ongoing (can resubmit); past end_at → ended; else ongoing/completed from DB.
 	query := `
-		SELECT id, title, description, xp, type, proof_type, priority, start_at, end_at, is_flash, is_weekly, created_by, created_at
-		FROM tasks
-		WHERE (start_at IS NULL OR start_at <= NOW())
-		AND (end_at IS NULL OR end_at >= NOW())
-		ORDER BY created_at DESC
+		SELECT t.id, t.title, t.description, t.xp, t.type, t.proof_type, t.priority, t.start_at, t.end_at, t.is_flash, t.is_weekly, t.created_by, t.created_at,
+			CASE
+				WHEN rejected.task_id IS NOT NULL AND (t.end_at IS NULL OR t.end_at >= NOW()) THEN 'ongoing'
+				WHEN t.end_at IS NOT NULL AND t.end_at < NOW() THEN 'ended'
+				ELSE COALESCE(t.status, 'ongoing')
+			END AS status
+		FROM tasks t
+		LEFT JOIN (
+			SELECT task_id FROM submissions WHERE user_id = $1 AND status = 'rejected'
+		) rejected ON rejected.task_id = t.id
+		WHERE (t.start_at IS NULL OR t.start_at <= NOW())
+		ORDER BY t.created_at DESC
 	`
 
-	rows, err := s.postgres.DB.QueryContext(ctx, query)
+	rows, err := s.postgres.DB.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
 	}
@@ -242,7 +271,7 @@ func (s *TaskStore) GetTasksForUser(ctx context.Context, userID string) ([]Task,
 
 		err := rows.Scan(
 			&task.ID, &task.Title, &task.Description, &task.XP, &task.Type, &task.ProofType, &task.Priority,
-			&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt,
+			&startAt, &endAt, &task.IsFlash, &task.IsWeekly, &task.CreatedBy, &task.CreatedAt, &task.Status,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
@@ -256,6 +285,68 @@ func (s *TaskStore) GetTasksForUser(ctx context.Context, userID string) ([]Task,
 		}
 
 		tasks = append(tasks, task)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating task rows: %w", err)
+	}
+
+	return tasks, nil
+}
+
+// GetTasksForUserWithStatus returns all tasks assigned to the user with per-task user_status (completed, viewing, rejected, not_started) for one-route completed/ongoing display.
+func (s *TaskStore) GetTasksForUserWithStatus(ctx context.Context, userID string) ([]TaskWithUserStatus, error) {
+	query := `
+		SELECT t.id, t.title, t.description, t.xp, t.type, t.proof_type, t.priority, t.start_at, t.end_at, t.is_flash, t.is_weekly, t.created_by, t.created_at,
+			CASE
+				WHEN rejected.task_id IS NOT NULL AND (t.end_at IS NULL OR t.end_at >= NOW()) THEN 'ongoing'
+				WHEN t.end_at IS NOT NULL AND t.end_at < NOW() THEN 'ended'
+				ELSE COALESCE(t.status, 'ongoing')
+			END AS status,
+			COALESCE(s.id::text, '') AS submission_id,
+			CASE
+				WHEN s.status = 'approved' THEN 'completed'
+				WHEN s.status = 'pending' THEN 'viewing'
+				WHEN s.status = 'rejected' THEN 'rejected'
+				ELSE 'not_started'
+			END AS user_status
+		FROM tasks t
+		LEFT JOIN (
+			SELECT task_id FROM submissions WHERE user_id = $1 AND status = 'rejected'
+		) rejected ON rejected.task_id = t.id
+		LEFT JOIN submissions s ON s.task_id = t.id AND s.user_id = $1
+		WHERE (t.start_at IS NULL OR t.start_at <= NOW())
+		ORDER BY t.created_at DESC
+	`
+
+	rows, err := s.postgres.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []TaskWithUserStatus
+	for rows.Next() {
+		var tw TaskWithUserStatus
+		var startAt, endAt sql.NullTime
+
+		err := rows.Scan(
+			&tw.ID, &tw.Title, &tw.Description, &tw.XP, &tw.Type, &tw.ProofType, &tw.Priority,
+			&startAt, &endAt, &tw.IsFlash, &tw.IsWeekly, &tw.CreatedBy, &tw.CreatedAt, &tw.Status,
+			&tw.SubmissionID, &tw.UserStatus,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan task: %w", err)
+		}
+
+		if startAt.Valid {
+			tw.StartAt = &startAt.Time
+		}
+		if endAt.Valid {
+			tw.EndAt = &endAt.Time
+		}
+
+		tasks = append(tasks, tw)
 	}
 
 	if err := rows.Err(); err != nil {

@@ -110,13 +110,17 @@ func (h *LeaderboardHub) subscribeToUpdates() {
 	}
 }
 
-// BroadcastLeaderboardUpdate publishes a leaderboard update to Redis
-func BroadcastLeaderboardUpdate(redisClient *db.Redis, leaderboardType string, scopeID string) {
+// BroadcastLeaderboardUpdate publishes a leaderboard update to Redis.
+// userID, rank, and xp are the updated user's id, new rank (pan-india), and new XP so clients can update that row.
+func BroadcastLeaderboardUpdate(redisClient *db.Redis, leaderboardType string, scopeID string, userID string, rank int, xp int) {
 	ctx := context.Background()
 	update := map[string]interface{}{
 		"type":      "leaderboard_update",
 		"scope":     leaderboardType,
 		"scope_id":  scopeID,
+		"user_id":   userID,
+		"rank":      rank,
+		"xp":        xp,
 		"timestamp": time.Now().Unix(),
 	}
 

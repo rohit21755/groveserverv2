@@ -226,7 +226,7 @@ func (s *S3Storage) UploadFile(
 
 	// Construct full URL
 	url := fmt.Sprintf("%s/%s", publicURL, key)
-	
+
 	// Ensure URL doesn't have double slashes
 	url = strings.ReplaceAll(url, "//", "/")
 	url = strings.Replace(url, "https:/", "https://", 1)
@@ -339,6 +339,21 @@ func (s *S3Storage) DeleteProfilePic(ctx context.Context, key string) error {
 		return err
 	}
 	log.Printf("[S3] Profile pic deleted successfully - Bucket: %s, Key: %s", s.profileBucket, key)
+	return nil
+}
+
+// DeleteTaskProof deletes a task proof file from S3 (image or video)
+func (s *S3Storage) DeleteTaskProof(ctx context.Context, key string) error {
+	log.Printf("[S3] Deleting task proof - Bucket: %s, Key: %s", s.taskProofBucket, key)
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.taskProofBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		log.Printf("[S3] ERROR: Failed to delete task proof - Bucket: %s, Key: %s, Error: %v", s.taskProofBucket, key, err)
+		return err
+	}
+	log.Printf("[S3] Task proof deleted successfully - Bucket: %s, Key: %s", s.taskProofBucket, key)
 	return nil
 }
 

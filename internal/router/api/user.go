@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rohit21755/groveserverv2/internal/db"
@@ -60,12 +61,12 @@ func handleGetMe(postgres *db.Postgres) http.HandlerFunc {
 
 // UserProfile represents a complete user profile
 type UserProfile struct {
-	User            *store.User        `json:"user"`
-	CompletedTasks  []store.FeedItem   `json:"completed_tasks"`
-	FollowingCount  int                `json:"following_count"`
-	FollowersCount  int                `json:"followers_count"`
-	StateName       string             `json:"state_name,omitempty"`
-	CollegeName     string             `json:"college_name,omitempty"`
+	User           *store.User      `json:"user"`
+	CompletedTasks []store.FeedItem `json:"completed_tasks"`
+	FollowingCount int              `json:"following_count"`
+	FollowersCount int              `json:"followers_count"`
+	StateName      string           `json:"state_name,omitempty"`
+	CollegeName    string           `json:"college_name,omitempty"`
 }
 
 // handleGetUser handles getting a user profile by ID with completed tasks, following/followers
@@ -200,7 +201,7 @@ func handleFollow(postgres *db.Postgres) http.HandlerFunc {
 		err := userStore.FollowUser(ctx, followerID, followingID)
 		if err != nil {
 			log.Printf("Error following user: %v", err)
-			
+
 			// Check for specific errors
 			if err.Error() == "cannot follow yourself" {
 				http.Error(w, "Cannot follow yourself", http.StatusBadRequest)
@@ -237,7 +238,7 @@ func handleFollow(postgres *db.Postgres) http.HandlerFunc {
 
 		// Return success response
 		response := map[string]interface{}{
-			"message":     "Successfully followed user",
+			"message":      "Successfully followed user",
 			"following_id": followingID,
 		}
 
@@ -290,7 +291,7 @@ func handleUnfollow(postgres *db.Postgres) http.HandlerFunc {
 		err := userStore.UnfollowUser(ctx, followerID, followingID)
 		if err != nil {
 			log.Printf("Error unfollowing user: %v", err)
-			
+
 			// Check for specific errors
 			if err.Error() == "cannot unfollow yourself" {
 				http.Error(w, "Cannot unfollow yourself", http.StatusBadRequest)
@@ -862,6 +863,60 @@ func handleGetMyTaskHistory(postgres *db.Postgres) http.HandlerFunc {
 	}
 }
 
+// handleStreakCheckIn records a daily check-in and updates the user's streak.
+// Call when the user opens the app / checks in for the day. Same day repeated calls are idempotent.
+// @Summary      Daily streak check-in
+// @Description  Record a daily check-in to the app. Counts toward streak (consecutive days). Same-day calls are idempotent. Returns current streak_days and streak_started_at.
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{}  "Check-in recorded, current streak"
+// @Failure      401  {string}  string  "Unauthorized"
+// @Failure      500  {string}  string  "Internal server error"
+// @Router       /api/user/streak/check-in [post]
+func handleStreakCheckIn(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		userID, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		streakStore := store.NewStreakStore(postgres)
+		err := streakStore.UpdateStreak(ctx, userID)
+		if err != nil {
+			log.Printf("Error updating streak on check-in: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to record check-in: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		streakDays, startedAt, err := streakStore.GetUserStreak(ctx, userID)
+		if err != nil {
+			log.Printf("Error getting user streak: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get streak: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		response := map[string]interface{}{
+			"streak_days": streakDays,
+		}
+		if startedAt != nil {
+			response["streak_started_at"] = startedAt.Format(time.RFC3339)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding streak check-in response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
 // handleRedeemStreak handles redeeming streak rewards
 // @Summary      Redeem streak reward
 // @Description  Redeem XP and badges based on current streak. Updates streak if needed.
@@ -918,8 +973,8 @@ func handleRedeemStreak(postgres *db.Postgres) http.HandlerFunc {
 		}
 
 		response := map[string]interface{}{
-			"streak_days":  streakDays,
-			"xp_reward":    xpReward,
+			"streak_days":    streakDays,
+			"xp_reward":      xpReward,
 			"badges_awarded": badgeIDs,
 		}
 

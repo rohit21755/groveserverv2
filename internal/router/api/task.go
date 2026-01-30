@@ -16,14 +16,14 @@ import (
 	"github.com/rohit21755/groveserverv2/internal/store"
 )
 
-// handleGetTasks handles getting all tasks assigned to the authenticated user
-// @Summary      Get tasks
-// @Description  Get all tasks assigned to the authenticated user. Returns active tasks that are available for submission.
+// handleGetTasks handles getting all tasks assigned to the authenticated user with completed/ongoing status.
+// @Summary      Get tasks (completed and ongoing)
+// @Description  Get all tasks assigned to the user. Each task includes user_status: completed, viewing, rejected, or not_started. Use user_status to show completed vs ongoing from one route.
 // @Tags         task
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200  {array}   store.Task  "List of tasks"
+// @Success      200  {array}   store.TaskWithUserStatus  "List of tasks with user_status"
 // @Failure      401  {string}  string  "Unauthorized"
 // @Failure      500  {string}  string  "Internal server error"
 // @Router       /api/tasks [get]
@@ -41,15 +41,15 @@ func handleGetTasks(postgres *db.Postgres) http.HandlerFunc {
 		// Create task store
 		taskStore := store.NewTaskStore(postgres)
 
-		// Get tasks for user
-		tasks, err := taskStore.GetTasksForUser(ctx, userID)
+		// Get tasks for user with user_status (completed / ongoing)
+		tasks, err := taskStore.GetTasksForUserWithStatus(ctx, userID)
 		if err != nil {
 			log.Printf("Error getting tasks: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get tasks: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		// Return tasks
+		// Return tasks (each has user_status: completed | viewing | rejected | not_started)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(tasks); err != nil {
@@ -180,7 +180,7 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		ext := strings.ToLower(filepath.Ext(filename))
 		allowedImageExts := []string{".jpg", ".jpeg", ".png", ".gif", ".webp"}
 		allowedVideoExts := []string{".mp4", ".mov", ".avi", ".mkv", ".webm"}
-		
+
 		isImage := false
 		isVideo := false
 		for _, allowedExt := range allowedImageExts {
@@ -206,10 +206,10 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		// Upload proof file to S3 task proof bucket
 		// Use a unique key: task-proofs/{taskID}/{userID}_{filename}
 		proofKey := fmt.Sprintf("task-proofs/%s/%s_%s", taskID, userID, filename)
-		
+
 		var proofURL string
 		var contentType string
-		
+
 		if isImage {
 			// Determine content type for images
 			contentType = "image/jpeg"
@@ -235,7 +235,7 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 				contentType = "video/webm"
 			}
 		}
-		
+
 		// Upload to task proof bucket (for both images and videos)
 		// Use the public URL from S3Storage (which has default if not set in config)
 		taskProofPublicURL := s3Storage.GetTaskProofPublicURL()
@@ -259,20 +259,15 @@ func handleSubmitTask(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 		})
 		if err != nil {
 			log.Printf("Error creating submission: %v", err)
-			
-			// Try to delete uploaded file if submission creation fails
-			key := extractS3KeyFromURL(proofURL)
-			if isImage {
-				_ = s3Storage.DeleteProfilePic(ctx, key)
-			} else {
-				_ = s3Storage.DeleteProfilePic(ctx, key) // Using same method for now
-			}
-			
+
+			// Try to delete uploaded proof file from S3 if submission creation fails
+			_ = s3Storage.DeleteTaskProof(ctx, proofKey)
+
 			if strings.Contains(err.Error(), "already exists") {
 				http.Error(w, "Task already submitted", http.StatusBadRequest)
 				return
 			}
-			
+
 			http.Error(w, fmt.Sprintf("Failed to create submission: %v", err), http.StatusInternalServerError)
 			return
 		}

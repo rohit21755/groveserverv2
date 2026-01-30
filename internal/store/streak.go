@@ -55,9 +55,9 @@ func (s *StreakStore) UpdateStreak(ctx context.Context, userID string) error {
 			// Already updated today, no change
 			return nil
 		} else if daysDiff == 1 {
-			// Consecutive day - increment streak
+			// Consecutive day - increment streak and record today as last active
 			newStreakDays = streakDays + 1
-			newStreakStartedAt = streakStartedAt.Time
+			newStreakStartedAt = today
 		} else {
 			// Streak broken - reset to 1
 			newStreakDays = 1

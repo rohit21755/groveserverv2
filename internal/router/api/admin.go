@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -547,22 +548,20 @@ func handleApproveSubmission(postgres *db.Postgres, redisClient *db.Redis) http.
 				log.Printf("Awarded %d XP to user %s for task approval (task_id: %s, xp_log_id: %s)",
 					task.XP, submission.UserID, submission.TaskID, xpLog.ID)
 
-				// Broadcast leaderboard updates via Redis
-				// Get user info to determine which leaderboards to update
+				// Broadcast leaderboard updates with user's new rank and XP
 				userStore := store.NewUserStore(postgres)
+				leaderboardStore := store.NewLeaderboardStore(postgres)
 				user, err := userStore.GetUserByID(ctx, submission.UserID)
 				if err == nil {
-					// Broadcast pan-india update
-					ws.BroadcastLeaderboardUpdate(redisClient, "pan-india", "")
+					rank, _ := leaderboardStore.GetUserRank(ctx, submission.UserID)
+					newXP := user.XP
 
-					// Broadcast state update if user has state
+					ws.BroadcastLeaderboardUpdate(redisClient, "pan-india", "", submission.UserID, rank, newXP)
 					if user.StateID != "" {
-						ws.BroadcastLeaderboardUpdate(redisClient, "state", user.StateID)
+						ws.BroadcastLeaderboardUpdate(redisClient, "state", user.StateID, submission.UserID, rank, newXP)
 					}
-
-					// Broadcast college update if user has college
 					if user.CollegeID != "" {
-						ws.BroadcastLeaderboardUpdate(redisClient, "college", user.CollegeID)
+						ws.BroadcastLeaderboardUpdate(redisClient, "college", user.CollegeID, submission.UserID, rank, newXP)
 					}
 				}
 			}
@@ -626,7 +625,7 @@ type RejectSubmissionRequest struct {
 // @Failure      404      {string}  string  "Submission not found"
 // @Failure      500      {string}  string  "Internal server error"
 // @Router       /admin/submissions/{id}/reject [post]
-func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
+func handleRejectSubmission(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -682,7 +681,7 @@ func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
 			return
 		}
 
-		// Reject submission
+		// Reject submission (submission row stays in DB with status = rejected)
 		rejectedSubmission, err := submissionStore.RejectSubmission(ctx, submissionID, adminUserID, req.Comment)
 		if err != nil {
 			log.Printf("Error rejecting submission: %v", err)
@@ -692,6 +691,31 @@ func handleRejectSubmission(postgres *db.Postgres) http.HandlerFunc {
 			}
 			http.Error(w, fmt.Sprintf("Failed to reject submission: %v", err), http.StatusInternalServerError)
 			return
+		}
+
+		// Delete proof file from S3 (submission record remains)
+		if existingSubmission.ProofURL != "" {
+			s3Storage, s3Err := storage.NewS3Storage(storage.S3Config{
+				Region:             cfg.AWSRegion,
+				ProfileBucket:      cfg.AWSProfileBucket,
+				ResumeBucket:       cfg.AWSResumeBucket,
+				TaskProofBucket:    cfg.AWSTaskProofBucket,
+				AccessKeyID:        cfg.AWSAccessKeyID,
+				SecretAccessKey:    cfg.AWSSecretAccessKey,
+				ProfilePublicURL:   cfg.AWSProfilePublicURL,
+				ResumePublicURL:    cfg.AWSResumePublicURL,
+				TaskProofPublicURL: cfg.AWSTaskProofPublicURL,
+			})
+			if s3Err == nil {
+				proofKey := extractTaskProofKeyFromURL(existingSubmission.ProofURL)
+				if proofKey != "" {
+					if delErr := s3Storage.DeleteTaskProof(ctx, proofKey); delErr != nil {
+						log.Printf("Error deleting rejected submission proof from S3 (submission %s): %v", submissionID, delErr)
+					}
+				}
+			} else {
+				log.Printf("Error initializing S3 for proof deletion: %v", s3Err)
+			}
 		}
 
 		// Get task details for notification
@@ -845,15 +869,15 @@ func handleCreateBadge(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc 
 		s3Storage, err := storage.NewS3Storage(storage.S3Config{
 			Region:             cfg.AWSRegion,
 			ProfileBucket:      cfg.AWSProfileBucket,
-			ResumeBucket:        cfg.AWSResumeBucket,
-			TaskProofBucket:     cfg.AWSTaskProofBucket,
-			BadgeBucket:         badgeBucket,
-			AccessKeyID:         cfg.AWSAccessKeyID,
-			SecretAccessKey:     cfg.AWSSecretAccessKey,
-			ProfilePublicURL:    cfg.AWSProfilePublicURL,
-			ResumePublicURL:      cfg.AWSResumePublicURL,
-			TaskProofPublicURL:   cfg.AWSTaskProofPublicURL,
-			BadgePublicURL:       cfg.AWSBadgePublicURL,
+			ResumeBucket:       cfg.AWSResumeBucket,
+			TaskProofBucket:    cfg.AWSTaskProofBucket,
+			BadgeBucket:        badgeBucket,
+			AccessKeyID:        cfg.AWSAccessKeyID,
+			SecretAccessKey:    cfg.AWSSecretAccessKey,
+			ProfilePublicURL:   cfg.AWSProfilePublicURL,
+			ResumePublicURL:    cfg.AWSResumePublicURL,
+			TaskProofPublicURL: cfg.AWSTaskProofPublicURL,
+			BadgePublicURL:     cfg.AWSBadgePublicURL,
 		})
 		if err != nil {
 			log.Printf("Error initializing S3 storage: %v", err)
@@ -893,7 +917,7 @@ func handleCreateBadge(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc 
 				Rule:          rule,
 				XP:            xp,
 				RequiredLevel: requiredLevel,
-				ImageURL:       "", // Will update after upload
+				ImageURL:      "", // Will update after upload
 				IsStreakBadge: isStreakBadge,
 			})
 			if err != nil {
@@ -956,6 +980,17 @@ func handleCreateBadge(postgres *db.Postgres, cfg *env.Config) http.HandlerFunc 
 			return
 		}
 	}
+}
+
+// extractTaskProofKeyFromURL extracts the S3 object key from a task proof URL.
+// URL format: https://bucket.s3.region.amazonaws.com/task-proofs/taskID/userID_filename.ext
+// Returns the path part (e.g. task-proofs/taskID/userID_filename.ext) or empty if parse fails.
+func extractTaskProofKeyFromURL(proofURL string) string {
+	u, err := url.Parse(proofURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Path, "/")
 }
 
 // adminAuthMiddleware handles admin authentication
