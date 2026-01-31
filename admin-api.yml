@@ -1,0 +1,755 @@
+openapi: 3.0.3
+info:
+  title: Admin API
+  description: |
+    Admin API for managing the platform. Base path `/admin`.
+    - **Auth** – login (public); create admin (protected).
+    - **States** – list, create (admin JWT required).
+    - **Colleges** – create (admin JWT required).
+    - **Tasks** – create, update (admin JWT required).
+    - **Badges** – create with image upload (admin JWT required).
+    - **Users** – add XP to any user (admin JWT required).
+    - **Submissions** – list, approve, reject (admin JWT required).
+  version: 1.0.0
+
+servers:
+  - url: /admin
+    description: Admin API base path
+
+security:
+  - BearerAuth: []
+
+paths:
+  /login:
+    post:
+      summary: Admin login
+      description: Login as admin. Returns JWT token and admin data. Use token in Authorization header (Bearer &lt;token&gt;) for protected admin routes.
+      operationId: adminLogin
+      tags:
+        - admin-auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+        '400':
+          description: Bad request – username and password required
+        '401':
+          description: Invalid username or password
+        '500':
+          description: Internal server error
+
+  /create:
+    post:
+      summary: Create admin
+      description: Create a new admin user. Admin JWT required. Password must be at least 8 characters.
+      operationId: createAdmin
+      tags:
+        - admin-auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminRequest'
+      responses:
+        '201':
+          description: Admin created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAdminResponse'
+        '400':
+          description: Bad request – name, username, password required; or username already exists; or password &lt; 8 chars
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /states:
+    get:
+      summary: Get all states
+      description: List all states. Admin JWT required.
+      operationId: getStates
+      tags:
+        - states
+      responses:
+        '200':
+          description: List of states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/State'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+    post:
+      summary: Create state
+      description: Create a new state. Admin JWT required.
+      operationId: createState
+      tags:
+        - states
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStateRequest'
+      responses:
+        '201':
+          description: State created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+        '400':
+          description: Bad request – name and code required
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /colleges:
+    post:
+      summary: Create college
+      description: Create a new college. Admin JWT required.
+      operationId: createCollege
+      tags:
+        - colleges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCollegeRequest'
+      responses:
+        '201':
+          description: College created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/College'
+        '400':
+          description: Bad request – name and state_id required
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /tasks:
+    post:
+      summary: Create task
+      description: Create a task and assign to users. assignment_type: all, state, college, user. assignment_id required when not "all". Admin JWT required.
+      operationId: createTask
+      tags:
+        - tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTaskResponse'
+        '400':
+          description: Bad request – missing/invalid fields
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /tasks/{id}:
+    put:
+      summary: Update task
+      description: Update an existing task. Admin JWT required.
+      operationId: updateTask
+      tags:
+        - tasks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Task not found
+        '500':
+          description: Internal server error
+
+  /badges:
+    post:
+      summary: Create badge
+      description: Create a badge with optional image upload. Admin JWT required. Multipart form-data.
+      operationId: createBadge
+      tags:
+        - badges
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - name
+                - xp
+                - required_level
+              properties:
+                name:
+                  type: string
+                xp:
+                  type: integer
+                required_level:
+                  type: integer
+                icon:
+                  type: string
+                rule:
+                  type: string
+                is_streak_badge:
+                  type: boolean
+                  default: false
+                image:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Badge created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Badge'
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /users:
+    get:
+      summary: Get all users
+      description: Fetch all users (students) with name, email, state, college, resume_url. Admin JWT required. Supports pagination.
+      operationId: getAllUsers
+      tags:
+        - users
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserSummary'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /users/xp:
+    post:
+      summary: Add XP to user
+      description: Add XP to a user's account. Admin only. Logs in xp_logs (source admin_grant). Broadcasts leaderboard update.
+      operationId: addXPToUser
+      tags:
+        - users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddXPRequest'
+      responses:
+        '200':
+          description: XP added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddXPResponse'
+        '400':
+          description: Bad request – user_id required, xp must be &gt; 0
+        '401':
+          description: Unauthorized
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
+
+  /submissions:
+    get:
+      summary: Get submissions
+      description: List all task submissions. Optional status filter (pending, approved, rejected). Admin JWT required.
+      operationId: getSubmissions
+      tags:
+        - submissions
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+      responses:
+        '200':
+          description: List of submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Submission'
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+
+  /submissions/{id}/approve:
+    post:
+      summary: Approve submission
+      description: Approve a task submission. Awards XP to user, sends notification, creates feed entry. Admin JWT required.
+      operationId: approveSubmission
+      tags:
+        - submissions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment:
+                  type: string
+      responses:
+        '200':
+          description: Submission approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '400':
+          description: Bad request – submission already approved
+        '401':
+          description: Unauthorized
+        '404':
+          description: Submission not found
+        '500':
+          description: Internal server error
+
+  /submissions/{id}/reject:
+    post:
+      summary: Reject submission
+      description: Reject a task submission with comment (required). Deletes proof from S3. User can resubmit if task deadline hasn't passed. Admin JWT required.
+      operationId: rejectSubmission
+      tags:
+        - submissions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - comment
+              properties:
+                comment:
+                  type: string
+      responses:
+        '200':
+          description: Submission rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '400':
+          description: Bad request – comment required
+        '401':
+          description: Unauthorized
+        '404':
+          description: Submission not found
+        '500':
+          description: Internal server error
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin JWT from POST /admin/login
+
+  schemas:
+    AdminLoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    AdminLoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        admin:
+          $ref: '#/components/schemas/Admin'
+
+    Admin:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        username:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateAdminRequest:
+      type: object
+      required:
+        - name
+        - username
+        - password
+      properties:
+        name:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          minLength: 8
+
+    CreateAdminResponse:
+      type: object
+      properties:
+        admin:
+          $ref: '#/components/schemas/Admin'
+        message:
+          type: string
+
+    State:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+
+    CreateStateRequest:
+      type: object
+      required:
+        - name
+        - code
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+
+    College:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        state_id:
+          type: string
+          format: uuid
+        city:
+          type: string
+
+    CreateCollegeRequest:
+      type: object
+      required:
+        - name
+        - state_id
+      properties:
+        name:
+          type: string
+        state_id:
+          type: string
+          format: uuid
+        city:
+          type: string
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        xp:
+          type: integer
+        type:
+          type: string
+        proof_type:
+          type: string
+        priority:
+          type: string
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+        is_flash:
+          type: boolean
+        is_weekly:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      required:
+        - title
+        - description
+        - type
+        - proof_type
+        - assignment_type
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        xp:
+          type: integer
+        type:
+          type: string
+        proof_type:
+          type: string
+        priority:
+          type: string
+          default: normal
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+        is_flash:
+          type: boolean
+        is_weekly:
+          type: boolean
+        assignment_type:
+          type: string
+          enum: [all, state, college, user]
+        assignment_id:
+          type: string
+          format: uuid
+          description: Required when assignment_type is not "all"
+
+    CreateTaskResponse:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/Task'
+        assigned_to:
+          type: integer
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        xp:
+          type: integer
+        type:
+          type: string
+        proof_type:
+          type: string
+        priority:
+          type: string
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+        is_flash:
+          type: boolean
+        is_weekly:
+          type: boolean
+
+    Badge:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        icon:
+          type: string
+        rule:
+          type: string
+        xp:
+          type: integer
+        required_level:
+          type: integer
+        image_url:
+          type: string
+        is_streak_badge:
+          type: boolean
+
+    UserSummary:
+      type: object
+      description: User summary for admin list (name, email, state, college, resume)
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        state_id:
+          type: string
+          format: uuid
+        state_name:
+          type: string
+        college_id:
+          type: string
+          format: uuid
+        college_name:
+          type: string
+        resume_url:
+          type: string
+          description: URL to user's resume (if uploaded)
+
+    AddXPRequest:
+      type: object
+      required:
+        - user_id
+        - xp
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        xp:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+
+    AddXPResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        xp_awarded:
+          type: integer
+        new_total_xp:
+          type: integer
+        xp_log_id:
+          type: string
+          format: uuid
+
+    Submission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        proof_url:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        created_at:
+          type: string
+          format: date-time

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -765,6 +766,101 @@ func handleRejectSubmission(postgres *db.Postgres, cfg *env.Config) http.Handler
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(rejectedSubmission); err != nil {
 			log.Printf("Error encoding reject submission response: %v", err)
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// handleGetAllUsers returns all users with name, email, state, college, resume_url. Admin JWT required.
+// @Summary      Get all users
+// @Description  Fetch all users (students) with name, email, state, college, resume_url. Admin JWT required. Supports pagination.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        page      query     int  false  "Page number (default 1)"
+// @Param        page_size query     int  false  "Items per page (default 100, max 1000)"
+// @Success      200       {array}   store.User  "List of users"
+// @Failure      401       {string}  string  "Unauthorized"
+// @Failure      500       {string}  string  "Internal server error"
+// @Router       /admin/users [get]
+func handleGetAllUsers(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		_, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		adminStore := store.NewAdminStore(postgres)
+		adminUserID, _ := GetUserIDFromContext(ctx)
+		_, err := adminStore.GetAdminByID(ctx, adminUserID)
+		if err != nil {
+			log.Printf("Error verifying admin: %v", err)
+			http.Error(w, "Admin not found", http.StatusUnauthorized)
+			return
+		}
+
+		page := 1
+		pageSize := 100
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		if pageSize > 1000 {
+			pageSize = 1000
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+
+		userStore := store.NewUserStore(postgres)
+		users, err := userStore.GetAllUsers(ctx, pageSize, offset)
+		if err != nil {
+			log.Printf("Error getting all users: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get users: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Return minimal fields: id, name, email, state_id, state_name, college_id, college_name, resume_url
+		type UserSummary struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Email       string `json:"email"`
+			StateID     string `json:"state_id"`
+			StateName   string `json:"state_name"`
+			CollegeID   string `json:"college_id"`
+			CollegeName string `json:"college_name"`
+			ResumeURL   string `json:"resume_url,omitempty"`
+		}
+		summaries := make([]UserSummary, 0, len(users))
+		for _, u := range users {
+			summaries = append(summaries, UserSummary{
+				ID:          u.ID,
+				Name:        u.Name,
+				Email:       u.Email,
+				StateID:     u.StateID,
+				StateName:   u.StateName,
+				CollegeID:   u.CollegeID,
+				CollegeName: u.CollegeName,
+				ResumeURL:   u.ResumeURL,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(summaries); err != nil {
+			log.Printf("Error encoding users response: %v", err)
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}

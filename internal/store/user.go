@@ -15,25 +15,25 @@ import (
 )
 
 type User struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Email           string    `json:"email"`
-	Phone           string    `json:"phone,omitempty"`
-	StateID         string    `json:"state_id"`
-	StateName       string    `json:"state_name,omitempty"`
-	CollegeID       string    `json:"college_id"`
-	CollegeName     string    `json:"college_name,omitempty"`
-	Role            string    `json:"role"`
-	XP              int       `json:"xp"`
-	Level           int       `json:"level"`
-	Coins           int       `json:"coins"`
-	Bio             string    `json:"bio,omitempty"`
-	AvatarURL       string    `json:"avatar_url,omitempty"`
-	ResumeURL       string    `json:"resume_url,omitempty"`
-	ResumeVisibility string   `json:"resume_visibility"`
-	ReferralCode    string    `json:"referral_code"`
-	ReferredByID    string    `json:"referred_by_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Email            string    `json:"email"`
+	Phone            string    `json:"phone,omitempty"`
+	StateID          string    `json:"state_id"`
+	StateName        string    `json:"state_name,omitempty"`
+	CollegeID        string    `json:"college_id"`
+	CollegeName      string    `json:"college_name,omitempty"`
+	Role             string    `json:"role"`
+	XP               int       `json:"xp"`
+	Level            int       `json:"level"`
+	Coins            int       `json:"coins"`
+	Bio              string    `json:"bio,omitempty"`
+	AvatarURL        string    `json:"avatar_url,omitempty"`
+	ResumeURL        string    `json:"resume_url,omitempty"`
+	ResumeVisibility string    `json:"resume_visibility"`
+	ReferralCode     string    `json:"referral_code"`
+	ReferredByID     string    `json:"referred_by_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type UserStore struct {
@@ -240,7 +240,7 @@ func (s *UserStore) generateUniqueReferralCode(ctx context.Context, tx *sql.Tx) 
 	maxAttempts := 10
 	for i := 0; i < maxAttempts; i++ {
 		code := generateReferralCode()
-		
+
 		// Check if code already exists
 		var exists bool
 		checkQuery := `SELECT EXISTS(SELECT 1 FROM users WHERE referral_code = $1)`
@@ -248,12 +248,12 @@ func (s *UserStore) generateUniqueReferralCode(ctx context.Context, tx *sql.Tx) 
 		if err != nil {
 			return "", fmt.Errorf("failed to check referral code uniqueness: %w", err)
 		}
-		
+
 		if !exists {
 			return code, nil
 		}
 	}
-	
+
 	return "", fmt.Errorf("failed to generate unique referral code after %d attempts", maxAttempts)
 }
 
@@ -275,6 +275,69 @@ func (s *UserStore) UpdateProfilePicURL(ctx context.Context, userID, profilePicU
 		return fmt.Errorf("failed to update profile picture URL: %w", err)
 	}
 	return nil
+}
+
+// GetAllUsers retrieves all users with state and college names (for admin).
+// Returns name, email, state, college, resume_url. Supports pagination.
+func (s *UserStore) GetAllUsers(ctx context.Context, limit, offset int) ([]*User, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	query := `
+		SELECT 
+			u.id, u.name, u.email, u.phone, u.state_id, u.college_id, u.role, u.xp, u.level, u.coins,
+			u.bio, u.avatar_url, u.resume_url, u.resume_visibility, u.referral_code,
+			u.referred_by_id, u.created_at,
+			COALESCE(s.name, '') as state_name,
+			COALESCE(c.name, '') as college_name
+		FROM users u
+		LEFT JOIN states s ON u.state_id = s.id
+		LEFT JOIN colleges c ON u.college_id = c.id
+		WHERE u.role = 'student'
+		ORDER BY u.created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := s.postgres.DB.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		var user User
+		var phone, bio sql.NullString
+		var referredByID sql.NullString
+
+		err := rows.Scan(
+			&user.ID, &user.Name, &user.Email, &phone, &user.StateID, &user.CollegeID,
+			&user.Role, &user.XP, &user.Level, &user.Coins,
+			&bio, &user.AvatarURL, &user.ResumeURL, &user.ResumeVisibility, &user.ReferralCode,
+			&referredByID, &user.CreatedAt,
+			&user.StateName, &user.CollegeName,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		if phone.Valid {
+			user.Phone = phone.String
+		}
+		if bio.Valid {
+			user.Bio = bio.String
+		}
+		if referredByID.Valid {
+			user.ReferredByID = referredByID.String
+		}
+		users = append(users, &user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating users: %w", err)
+	}
+	return users, nil
 }
 
 // GetUserByID retrieves a user by ID with state and college names
@@ -331,14 +394,14 @@ func generateReferralCode() string {
 		// Fallback to UUID-based code if random generation fails
 		return generateUUIDBasedCode()
 	}
-	
+
 	// Encode to base64 and take first 8 characters, make uppercase
 	code := base64.URLEncoding.EncodeToString(bytes)
 	if len(code) < 8 {
 		return generateUUIDBasedCode()
 	}
 	code = code[:8]
-	
+
 	// Remove any special characters and make uppercase
 	result := ""
 	for _, char := range code {
@@ -350,12 +413,12 @@ func generateReferralCode() string {
 			}
 		}
 	}
-	
+
 	// Ensure we have at least 8 characters
 	if len(result) < 8 {
 		return generateUUIDBasedCode()
 	}
-	
+
 	return result[:8]
 }
 

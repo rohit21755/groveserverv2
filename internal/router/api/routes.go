@@ -130,7 +130,8 @@ func SetupAdminRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis
 			r.Post("/", handleCreateBadge(postgres, cfg))
 		})
 
-		// User management – add XP to a user's account
+		// User management
+		r.Get("/users", handleGetAllUsers(postgres))
 		r.Post("/users/xp", handleAddXP(postgres, redisClient))
 
 		// Submission management
