@@ -21,6 +21,8 @@ func SetupAPIRoutes(r chi.Router, postgres *db.Postgres, redisClient *db.Redis, 
 		r.Use(JWTAuthMiddleware(cfg))
 		r.Get("/me", handleGetMe(postgres))
 		r.Get("/{id}", handleGetUser(postgres))
+		r.Get("/{id}/followers", handleGetFollowers(postgres))
+		r.Get("/{id}/following", handleGetFollowing(postgres))
 		r.Post("/{id}/follow", handleFollow(postgres))
 		r.Post("/{id}/unfollow", handleUnfollow(postgres))
 		// Resume routes

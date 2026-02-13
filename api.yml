@@ -311,25 +311,104 @@ paths:
                 college_name: "Example College"
         '400':
           description: Bad request - User ID required
-          content:
-            text/plain:
-              schema:
-                type: string
-              example: "User ID required"
+        '401':
+          description: Unauthorized
         '404':
           description: User not found
-          content:
-            text/plain:
-              schema:
-                type: string
-              example: "User not found"
         '500':
           description: Internal server error
+
+  /user/{id}/followers:
+    get:
+      summary: Get followers
+      description: Get list of users who follow the specified user. Generic – works for any user ID. Paginated. JWT required.
+      operationId: getFollowers
+      tags:
+        - user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID whose followers to fetch
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: List of followers
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-              example: "Failed to get user profile"
+                type: array
+                items:
+                  $ref: '#/components/schemas/FollowUserInfo'
+        '400':
+          description: User ID required
+        '401':
+          description: Unauthorized
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
+
+  /user/{id}/following:
+    get:
+      summary: Get following
+      description: Get list of users that the specified user follows. Generic – works for any user ID. Paginated. JWT required.
+      operationId: getFollowing
+      tags:
+        - user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID whose following list to fetch
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: List of following
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FollowUserInfo'
+        '400':
+          description: User ID required
+        '401':
+          description: Unauthorized
+        '404':
+          description: User not found
+        '500':
+          description: Internal server error
 
   /user/{id}/follow:
     post:
@@ -1889,6 +1968,26 @@ components:
         created_at:
           type: string
           format: date-time
+
+    FollowUserInfo:
+      type: object
+      description: Minimal user info for followers/following lists
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        avatar_url:
+          type: string
+        xp:
+          type: integer
+        level:
+          type: integer
+        state_name:
+          type: string
+        college_name:
+          type: string
 
     UserProfile:
       type: object

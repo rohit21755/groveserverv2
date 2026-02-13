@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -160,6 +161,156 @@ func handleGetUser(postgres *db.Postgres) http.HandlerFunc {
 			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// handleGetFollowers returns the list of users who follow the given user. Works for any user ID.
+// @Summary      Get followers
+// @Description  Get list of users who follow the specified user. Generic – works for any user ID. Paginated.
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id         path      string  true   "User ID whose followers to fetch"
+// @Param        page       query     int     false  "Page number (default 1)"
+// @Param        page_size  query     int     false  "Items per page (default 50, max 100)"
+// @Success      200        {array}   store.FollowUserInfo  "List of followers"
+// @Failure      400        {string}  string  "Bad request – user ID required"
+// @Failure      404        {string}  string  "User not found"
+// @Failure      401        {string}  string  "Unauthorized"
+// @Failure      500        {string}  string  "Internal server error"
+// @Router       /api/user/{id}/followers [get]
+func handleGetFollowers(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		_, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		userID := chi.URLParam(r, "id")
+		if userID == "" {
+			http.Error(w, "User ID is required", http.StatusBadRequest)
+			return
+		}
+
+		page, pageSize := 1, 50
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+
+		userStore := store.NewUserStore(postgres)
+		_, err := userStore.GetUserByID(ctx, userID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		followers, err := userStore.GetFollowers(ctx, userID, pageSize, offset)
+		if err != nil {
+			log.Printf("Error getting followers: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get followers: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if followers == nil {
+			followers = []store.FollowUserInfo{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(followers)
+	}
+}
+
+// handleGetFollowing returns the list of users that the given user follows. Works for any user ID.
+// @Summary      Get following
+// @Description  Get list of users that the specified user follows. Generic – works for any user ID. Paginated.
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id         path      string  true   "User ID whose following list to fetch"
+// @Param        page       query     int     false  "Page number (default 1)"
+// @Param        page_size  query     int     false  "Items per page (default 50, max 100)"
+// @Success      200        {array}   store.FollowUserInfo  "List of following"
+// @Failure      400        {string}  string  "Bad request – user ID required"
+// @Failure      404        {string}  string  "User not found"
+// @Failure      401        {string}  string  "Unauthorized"
+// @Failure      500        {string}  string  "Internal server error"
+// @Router       /api/user/{id}/following [get]
+func handleGetFollowing(postgres *db.Postgres) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		_, ok := GetUserIDFromContext(ctx)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		userID := chi.URLParam(r, "id")
+		if userID == "" {
+			http.Error(w, "User ID is required", http.StatusBadRequest)
+			return
+		}
+
+		page, pageSize := 1, 50
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+		if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
+			if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+				pageSize = ps
+			}
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		offset := (page - 1) * pageSize
+		if offset < 0 {
+			offset = 0
+		}
+
+		userStore := store.NewUserStore(postgres)
+		_, err := userStore.GetUserByID(ctx, userID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		following, err := userStore.GetFollowing(ctx, userID, pageSize, offset)
+		if err != nil {
+			log.Printf("Error getting following: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get following: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if following == nil {
+			following = []store.FollowUserInfo{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(following)
 	}
 }
 

@@ -523,3 +523,98 @@ func (s *UserStore) GetFollowersCount(ctx context.Context, userID string) (int, 
 	}
 	return count, nil
 }
+
+// FollowUserInfo is a minimal user for followers/following lists
+type FollowUserInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	AvatarURL   string `json:"avatar_url,omitempty"`
+	XP          int    `json:"xp"`
+	Level       int    `json:"level"`
+	StateName   string `json:"state_name,omitempty"`
+	CollegeName string `json:"college_name,omitempty"`
+}
+
+// GetFollowers returns users who follow the given user. Paginated.
+func (s *UserStore) GetFollowers(ctx context.Context, userID string, limit, offset int) ([]FollowUserInfo, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := `
+		SELECT u.id, u.name, u.avatar_url, u.xp, u.level,
+			COALESCE(s.name, '') as state_name, COALESCE(c.name, '') as college_name
+		FROM user_follows uf
+		INNER JOIN users u ON uf.follower_id = u.id
+		LEFT JOIN states s ON u.state_id = s.id
+		LEFT JOIN colleges c ON u.college_id = c.id
+		WHERE uf.following_id = $1
+		ORDER BY uf.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := s.postgres.DB.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query followers: %w", err)
+	}
+	defer rows.Close()
+
+	var list []FollowUserInfo
+	for rows.Next() {
+		var u FollowUserInfo
+		var avatar sql.NullString
+		err := rows.Scan(&u.ID, &u.Name, &avatar, &u.XP, &u.Level, &u.StateName, &u.CollegeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan follower: %w", err)
+		}
+		if avatar.Valid {
+			u.AvatarURL = avatar.String
+		}
+		list = append(list, u)
+	}
+	return list, rows.Err()
+}
+
+// GetFollowing returns users that the given user follows. Paginated.
+func (s *UserStore) GetFollowing(ctx context.Context, userID string, limit, offset int) ([]FollowUserInfo, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := `
+		SELECT u.id, u.name, u.avatar_url, u.xp, u.level,
+			COALESCE(s.name, '') as state_name, COALESCE(c.name, '') as college_name
+		FROM user_follows uf
+		INNER JOIN users u ON uf.following_id = u.id
+		LEFT JOIN states s ON u.state_id = s.id
+		LEFT JOIN colleges c ON u.college_id = c.id
+		WHERE uf.follower_id = $1
+		ORDER BY uf.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := s.postgres.DB.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query following: %w", err)
+	}
+	defer rows.Close()
+
+	var list []FollowUserInfo
+	for rows.Next() {
+		var u FollowUserInfo
+		var avatar sql.NullString
+		err := rows.Scan(&u.ID, &u.Name, &avatar, &u.XP, &u.Level, &u.StateName, &u.CollegeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan following: %w", err)
+		}
+		if avatar.Valid {
+			u.AvatarURL = avatar.String
+		}
+		list = append(list, u)
+	}
+	return list, rows.Err()
+}
